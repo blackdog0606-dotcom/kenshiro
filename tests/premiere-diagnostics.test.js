@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const { collectPremiereDiagnostics } = require("../src/premiere-diagnostics");
 
 function sdk(options = {}) {
-  const calls = { writes: 0, chainReads: 0, paramReads: 0 };
+  const calls = { writes: 0, chainReads: 0, paramReads: 0, projectReads: 0 };
   const forbidden = () => { calls.writes++; throw new Error("diagnostics must never mutate"); };
   const defaultParams = [
     { name: "切り抜き（左側）", value: { value: { value: 1.1 } } },
@@ -27,6 +27,7 @@ function sdk(options = {}) {
         displayName: param.name,
         isTimeVarying: () => Boolean(param.animated),
         getStartValue: async () => {
+          if (param.wait) return await param.wait;
           if (param.error) throw new Error("credential-value-do-not-print /Users/private/image.tif");
           return param.value;
         },
@@ -57,12 +58,16 @@ function sdk(options = {}) {
     ppro: {
       VideoFilterFactory: {
         getMatchNames: async () => {
+          if (options.factoryWait) return await options.factoryWait;
           if (options.factoryError) throw new Error("private-error-secret");
           return options.names || ["AE.ADBE Crop", "AE.ADBE Other", "PR.ADBE Crop"];
         },
         createComponent: forbidden
       },
-      Project: { getActiveProject: async () => options.noProject ? null : project },
+      Project: { getActiveProject: async () => {
+        calls.projectReads++;
+        return options.noProject ? null : project;
+      } },
       VideoClipTrackItem
     }
   };
@@ -152,4 +157,70 @@ test("unknown SDK operation shapes are reported rather than crashing or serializ
   assert.match(result, /エフェクト一覧: 想定外の返却型 object/);
   assert.match(result, /Project\.getActiveProject: 取得失敗/);
   assert.doesNotMatch(result, /do-not-print/);
+});
+
+test("a never-settling factory read times out and aborts remaining diagnostics", { timeout: 1000 }, async () => {
+  const f = sdk({ factoryWait: new Promise(() => {}) });
+  const snapshots = [];
+  const result = await collectPremiereDiagnostics(f.ppro, {
+    timeoutMs: 5, totalTimeoutMs: 100,
+    onProgress: snapshot => snapshots.push(snapshot)
+  });
+  assert.match(result, /VideoFilterFactory\.getMatchNames: タイムアウト/);
+  assert.match(result, /ここまでの結果/);
+  assert.ok(snapshots.some(snapshot => /getMatchNames: 読み取り中/.test(snapshot)));
+  assert.equal(snapshots.at(-1), result);
+  assert.equal(f.calls.projectReads, 0);
+  assert.equal(f.calls.writes, 0);
+});
+
+test("a never-settling value read preserves preceding values and aborts instead of timing out every parameter", { timeout: 1000 }, async () => {
+  const f = sdk({ params: [
+    { name: "Left", value: { value: { value: 1.1 } } },
+    { name: "Right", wait: new Promise(() => {}) },
+    { name: "Top", value: 2.5 }
+  ] });
+  const result = await collectPremiereDiagnostics(f.ppro, { timeoutMs: 5, totalTimeoutMs: 100 });
+  assert.match(result, /number\(1\.1\)/);
+  assert.match(result, /パラメータ\[1\] getStartValue: タイムアウト/);
+  assert.doesNotMatch(result, /名前: Top/);
+  assert.equal(f.calls.paramReads, 2);
+  assert.equal(f.calls.writes, 0);
+});
+
+test("the overall deadline bounds a read even when the per-step timeout is longer", { timeout: 1000 }, async () => {
+  const f = sdk({ factoryWait: new Promise(() => {}) });
+  const result = await collectPremiereDiagnostics(f.ppro, { timeoutMs: 10000, totalTimeoutMs: 5 });
+  assert.match(result, /getMatchNames: タイムアウト/);
+  assert.equal(f.calls.projectReads, 0);
+});
+
+test("late native rejection and failing progress observers do not escape as unhandled rejections", { timeout: 1000 }, async () => {
+  let rejectNative;
+  const native = new Promise((resolve, reject) => { rejectNative = reject; });
+  const f = sdk({ factoryWait: native });
+  const unhandled = [];
+  const observe = reason => unhandled.push(reason);
+  process.on("unhandledRejection", observe);
+  try {
+    const result = await collectPremiereDiagnostics(f.ppro, {
+      timeoutMs: 5, totalTimeoutMs: 100,
+      onProgress: async () => { throw new Error("display observer failed"); }
+    });
+    assert.match(result, /タイムアウト/);
+    rejectNative(new Error("late native private-error-secret"));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener("unhandledRejection", observe);
+  }
+});
+
+test("a synchronous progress observer exception does not hide a successful report", async () => {
+  const f = sdk({ noProject: true });
+  const result = await collectPremiereDiagnostics(f.ppro, {
+    onProgress() { throw new Error("UI unavailable"); }
+  });
+  assert.match(result, /完全一致: AE\.ADBE Crop/);
+  assert.match(result, /プロジェクト: なし/);
 });

@@ -1,17 +1,17 @@
-# 開発用プラグインZIP v0.1.1
+# 開発用プラグインZIP v0.1.2
 
-[v0.1.1 診断版をダウンロード](https://github.com/blackdog0606-dotcom/kenshiro/raw/refs/heads/main/downloads/kenshiro-blackcrop-mvp-0.1.1.zip)
+[v0.1.2 起動処理修正版をダウンロード](https://github.com/blackdog0606-dotcom/kenshiro/raw/refs/heads/main/downloads/kenshiro-blackcrop-mvp-0.1.2.zip)
 
-この版は適用失敗の具体的な理由を表示するための診断版です。適用失敗そのものの解決は未確認です。
+ボタンの初期化をDOM準備時にも実行し、起動失敗を独立スクリプトで表示します。診断の無期限待機を防ぎ、診断中も他の操作をロックしません。実機でのCrop適用成功はまだ確認できていません。
 
-- サイズ: 242,128 bytes
-- SHA-256: `edde15b805582194613a44d1822bbca7d055fd1bb6ebac706f0a950a07de5e7c`
+- サイズ: 252,463 bytes
+- SHA-256: `4ca9f48afdbf0918556e8cb0cf2ffef040678bb923ce0a110a1b7662d2704977`
 - 対象: Premiere Pro 25.6以降
-- 同梱: ビルド済みUXPパネル、ソース、導入手順、テスト用TIF10枚
-- 自動テスト: 139件成功。実機の適用失敗は診断中。
+- 自動テスト: 162件成功
+- 同梱: ビルド済みUXPパネル、ソース、導入手順、生成したテスト用TIF10枚
 
-旧版をUXP Developer ToolでUnload→Removeし、新しいZIPを解凍して `kenshiro-blackcrop-mvp-0.1.1/manifest.json` をAdd Plugin→Loadしてください。
+旧版をUXP Developer ToolでUnload→Removeし、新しいZIPの `kenshiro-blackcrop-mvp-0.1.2/manifest.json` をAdd Plugin→Loadしてください。
 
-静止画1枚を解析・適用し、失敗したら画面上部の「失敗理由」と「診断情報」欄をコピーしてください。診断情報は自動送信されません。
+まずパネル上部に「起動済み v0.1.2」が出ることを確認してください。「起動・実行エラー」が出たらその文章を報告してください。起動後に1枚だけ解析・適用し、失敗した場合は上部の失敗理由と診断情報欄を報告してください。
 
-提供されたユーザー画像はZIPに含めていません。署名済みCCXではありません。
+APP LOGSに `[Kenshiro] bootstrap v0.1.2` と `[Kenshiro] ready v0.1.2` が記録されます。診断情報は自動送信されません。提供されたユーザー画像はZIPに含めていません。署名済みCCXではありません。

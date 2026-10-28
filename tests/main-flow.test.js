@@ -36,6 +36,9 @@ function detection(mode) {
 
 function fixture(options = {}) {
   const nodes = new Map(["analyze", "apply", "cancel", "mode", "status", "results", "diagnose", "diagnostics"].map(id => [id, element()]));
+  if (options.missingId) nodes.delete(options.missingId);
+  const documentEvents = new Map();
+  const boot = { initialized: false, errors: [], markReady() { this.initialized = true; }, reportError(error) { this.errors.push(error.message); } };
   nodes.get("mode").value = "panel-frame";
   const items = Array.from({ length: options.count || 1 }, (_, index) => ({
     name: `sample-${index + 1}.tif`, path: `/images/sample-${index + 1}.tif`, trackItem: { index }
@@ -52,9 +55,10 @@ function fixture(options = {}) {
   const imports = {
     uxp: { entrypoints: { setup(value) { panel = value.panels.blackCropPanel; } }, storage: {} },
     premierepro: {},
-    "../manifest.json": { version: "0.1.1" },
+    "../manifest.json": { version: "0.1.2" },
     "./premiere-diagnostics": { collectPremiereDiagnostics: async () => {
       calls.diagnostics++;
+      if (options.diagnosticsWait) await options.diagnosticsWait;
       if (options.diagnosticsError) throw new Error("診断APIを読み取れません。");
       return "Crop候補: AE.ADBE Crop\n構成: ADBE Motion";
     } },
@@ -99,7 +103,12 @@ function fixture(options = {}) {
       assert.ok(imports[name], `Unmocked panel dependency: ${name}`);
       return imports[name];
     },
-    document: { getElementById: id => nodes.get(id), createElement: () => element() },
+    document: {
+      readyState: options.readyState || "complete",
+      getElementById: id => nodes.get(id), createElement: () => element(),
+      addEventListener: (name, callback) => documentEvents.set(name, callback)
+    },
+    window: { __kenshiroBoot: boot },
     setTimeout(callback) {
       queueMicrotask(() => {
         if (options.onYield) options.onYield(api);
@@ -112,15 +121,16 @@ function fixture(options = {}) {
   vm.runInNewContext(readFileSync(resolve(__dirname, "../src/main.js"), "utf8"), sandbox,
     { filename: "main.js" });
   api = {
-    nodes, calls, context,
+    nodes, calls, context, boot,
     show: () => panel.show(),
+    domReady: () => documentEvents.get("DOMContentLoaded")(),
     event: async (id, name = "click") => {
       for (const callback of nodes.get(id).listeners[name] || []) await callback();
     },
     status: () => nodes.get("status").textContent,
     results: () => fullText(nodes.get("results"))
   };
-  api.show();
+  if (!options.skipShow) api.show();
   return api;
 }
 
@@ -180,7 +190,7 @@ test("one apply failure is displayed and processing continues with remaining cli
   assert.match(f.results(), /シーケンスが変更/);
   assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
   assert.equal(f.calls.diagnostics, 1);
-  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.1/);
+  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.2/);
   assert.match(f.nodes.get("diagnostics").value, /Crop候補/);
   assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
   assert.equal(f.nodes.get("analyze").disabled, false);
@@ -273,4 +283,70 @@ test("selection and source read errors restore controls and give actionable feed
   await unreadable.event("analyze");
   assert.match(unreadable.results(), /元画像を読み込めません/);
   assert.equal(unreadable.nodes.get("apply").disabled, true);
+});
+
+test("buttons initialize without requiring an entrypoint show notification", async () => {
+  const f = fixture({ skipShow: true });
+  assert.equal(f.boot.initialized, true);
+  assert.equal(f.nodes.get("analyze").listeners.click.length, 1);
+  await f.event("analyze");
+  assert.equal(f.calls.read.length, 1);
+});
+
+test("DOM-ready initializes the panel once even when show arrives later", async () => {
+  const f = fixture({ readyState: "loading", skipShow: true });
+  assert.equal(f.boot.initialized, false);
+  f.domReady();
+  f.show();
+  assert.equal(f.boot.initialized, true);
+  assert.equal(f.nodes.get("analyze").listeners.click.length, 1);
+});
+
+test("failed startup is visible and can be retried after a missing DOM node is restored", async () => {
+  const f = fixture({ missingId: "diagnostics", skipShow: true });
+  assert.equal(f.boot.initialized, false);
+  assert.match(f.status(), /起動失敗.*diagnostics/);
+  f.nodes.set("diagnostics", element());
+  f.show();
+  f.show();
+  assert.equal(f.boot.initialized, true);
+  assert.equal(f.nodes.get("analyze").listeners.click.length, 1);
+});
+
+test("a diagnostic SDK wait does not lock analysis or overwrite a newer run", async () => {
+  let release;
+  const diagnosticsWait = new Promise(resolve => { release = resolve; });
+  const f = fixture({ diagnosticsWait });
+  const pending = f.event("diagnose");
+  assert.match(f.nodes.get("diagnostics").value, /取得中/);
+  assert.equal(f.nodes.get("mode").disabled, false);
+  assert.equal(f.nodes.get("analyze").disabled, false);
+  await f.event("analyze");
+  release();
+  await pending;
+  assert.equal(f.nodes.get("diagnostics").value, "");
+  assert.match(f.status(), /適用待ち 1/);
+});
+
+test("optional automatic diagnostics do not block completion of a failed apply", async () => {
+  let release;
+  const diagnosticsWait = new Promise(resolve => { release = resolve; });
+  const f = fixture({ diagnosticsWait, hostFailPaths: ["/images/sample-1.tif"] });
+  await f.event("analyze");
+  await f.event("apply");
+  assert.match(f.status(), /失敗理由/);
+  assert.equal(f.nodes.get("analyze").disabled, false);
+  assert.equal(f.nodes.get("mode").disabled, false);
+  release();
+});
+
+test("an event-handler exception before its inner try is displayed and clears busy", async () => {
+  const f = fixture();
+  f.nodes.delete("diagnostics");
+  await f.event("analyze");
+  assert.match(f.status(), /解析:/);
+  assert.equal(f.nodes.get("analyze").disabled, false);
+  f.nodes.set("diagnostics", element());
+  await f.event("analyze");
+  assert.equal(f.calls.read.length, 1);
 });

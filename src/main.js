@@ -17,6 +17,9 @@ let records = [];
 let busy = false;
 let cancelled = false;
 let initialized = false;
+let diagnosticBusy = false;
+let diagnosticRun = 0;
+const boundEvents = new Set();
 const el = id => document.getElementById(id);
 const message = error => error && error.message ? error.message : String(error);
 const yieldUI = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -26,27 +29,47 @@ function controls() {
   el("analyze").disabled = busy;
   el("apply").disabled = busy || !records.some(record => record.state === "ready");
   el("cancel").disabled = !busy;
-  el("diagnose").disabled = busy;
+  el("diagnose").disabled = busy || diagnosticBusy;
+}
+
+function clearDiagnostics() {
+  diagnosticRun++;
+  diagnosticBusy = false;
+  el("diagnostics").value = "";
 }
 
 async function refreshDiagnostics(failures = []) {
+  const run = ++diagnosticRun;
+  diagnosticBusy = true;
   const lines = [`Kenshiro v${PLUGIN_VERSION}`];
   failures.forEach((record, index) => lines.push(`失敗 ${index + 1}: ${record.error}`));
-  el("diagnostics").value = `${lines.join("\n")}\n診断情報を取得中…`;
+  const prefix = lines.join("\n");
   try {
-    lines.push(await collectPremiereDiagnostics(ppro));
+    controls();
+    el("diagnostics").value = `${prefix}\n診断情報を取得中…`;
+    const report = await collectPremiereDiagnostics(ppro, {
+      onProgress: partial => {
+        if (run === diagnosticRun) el("diagnostics").value = `${prefix}\n${partial}`;
+      }
+    });
+    if (run === diagnosticRun) el("diagnostics").value = `${prefix}\n${report}`;
   } catch (error) {
-    lines.push(`診断情報の取得にも失敗しました: ${message(error)}`);
+    if (run === diagnosticRun) {
+      const field = el("diagnostics");
+      if (field) field.value = `${prefix}\n診断情報の取得にも失敗しました: ${message(error)}`;
+      console.error(`[Kenshiro] diagnostics: ${message(error)}`);
+    }
+  } finally {
+    if (run === diagnosticRun) {
+      diagnosticBusy = false;
+      controls();
+    }
   }
-  el("diagnostics").value = lines.join("\n");
 }
 
 async function diagnose() {
-  if (busy) return;
-  busy = true;
-  controls();
-  try { await refreshDiagnostics(records.filter(record => record.error)); }
-  finally { busy = false; controls(); }
+  if (busy || diagnosticBusy) return;
+  await refreshDiagnostics(records.filter(record => record.error));
 }
 
 function text(parent, value, className) {
@@ -88,7 +111,7 @@ async function analyze() {
   context = null;
   records = [];
   el("status").className = "";
-  el("diagnostics").value = "";
+  clearDiagnostics();
   const mode = el("mode").value;
   render();
   try {
@@ -142,7 +165,7 @@ async function apply() {
   busy = true;
   cancelled = false;
   el("status").className = "";
-  el("diagnostics").value = "";
+  clearDiagnostics();
   controls();
   const targets = records.filter(record => record.state === "ready");
   let applied = 0;
@@ -168,7 +191,7 @@ async function apply() {
     const failures = targets.filter(record => record.state === "failed");
     el("status").className = failures.length ? "error" : "";
     el("status").textContent = `${cancelled ? "適用中断" : "適用完了"}: 成功 ${applied} 件、失敗 ${failed} 件。Motionは未変更です。取り消しは編集メニューの「取り消し」で行えます。${failures.length ? `\n失敗理由: ${failures[0].error}\n下の「診断情報」の文章をコピーして送ってください。` : ""}`;
-    if (failures.length) await refreshDiagnostics(failures);
+    if (failures.length) void refreshDiagnostics(failures);
   } finally {
     busy = false;
     controls();
@@ -177,20 +200,55 @@ async function apply() {
 
 function initialize() {
   if (initialized) return;
-  initialized = true;
-  el("analyze").addEventListener("click", analyze);
-  el("apply").addEventListener("click", apply);
-  el("cancel").addEventListener("click", () => { cancelled = true; });
-  el("diagnose").addEventListener("click", diagnose);
-  el("mode").addEventListener("change", () => {
+  for (const id of ["mode", "analyze", "apply", "cancel", "diagnose", "diagnostics", "status", "results"]) {
+    if (!el(id)) throw new Error(`画面の部品「${id}」が見つかりません。HTMLとスクリプトの版が一致しているか確認してください。`);
+  }
+  function bind(id, event, callback) {
+    const key = `${id}:${event}`;
+    if (boundEvents.has(key)) return;
+    el(id).addEventListener(event, callback);
+    boundEvents.add(key);
+  }
+  bind("analyze", "click", () => dispatch("解析", analyze));
+  bind("apply", "click", () => dispatch("適用", apply));
+  bind("cancel", "click", () => { cancelled = true; });
+  bind("diagnose", "click", () => dispatch("診断", diagnose));
+  bind("mode", "change", () => {
     context = null;
     records = [];
     el("status").className = "";
-    el("diagnostics").value = "";
+    clearDiagnostics();
     render();
     el("status").textContent = "検出モードを変更しました。選択クリップを再解析してください。";
   });
   controls();
+  initialized = true;
+  if (typeof window !== "undefined" && window.__kenshiroBoot) window.__kenshiroBoot.markReady();
+  console.log(`[Kenshiro] panel handlers ready v${PLUGIN_VERSION}`);
 }
 
-entrypoints.setup({ panels: { blackCropPanel: { show: initialize } } });
+function reportError(error, label) {
+  const description = `${label}: ${message(error)}`;
+  console.error(`[Kenshiro] ${description}`);
+  const status = el("status");
+  if (status) { status.textContent = description; status.className = "error"; }
+  if (typeof window !== "undefined" && window.__kenshiroBoot) window.__kenshiroBoot.reportError(new Error(description));
+}
+
+async function dispatch(label, action) {
+  console.log(`[Kenshiro] ${label} click`);
+  try { await action(); }
+  catch (error) {
+    busy = false;
+    reportError(error, label);
+    try { controls(); } catch (_) { /* Startup error is already visible. */ }
+  }
+}
+
+function startPanel() {
+  try { initialize(); } catch (error) { reportError(error, "起動失敗"); }
+}
+
+entrypoints.setup({ panels: { blackCropPanel: { show: startPanel } } });
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startPanel);
+else startPanel();
