@@ -8,9 +8,10 @@
 </head>
 <body>
   <div id="panel-scroll">
-  <h1>黒枠自動クロップ v0.1.4</h1>
+  <h1>黒枠自動クロップ v0.1.5</h1>
   <p id="startup-status" role="status">起動チェックを読み込んでいます…</p>
   <p id="status" role="status" aria-live="polite">未解析です。タイムラインの静止画を選択してください。</p>
+  <p>適用先：モーション → 切り抜き（左端・上端・右端・下端）</p>
   <p class="muted">PNG／JPEG／TIFを1〜10枚。①解析 → ②適用。</p>
   <label for="mode">検出する枠</label>
   <select id="mode" disabled>
@@ -27,8 +28,8 @@
   <label for="diagnostics">診断情報（失敗時はこの欄をコピーして送ってください）</label>
   <textarea id="diagnostics" readonly placeholder="適用に失敗すると、具体的な理由とPremiereのエフェクト情報をここに表示します。"></textarea>
   <p class="muted">黒はRGB各値20以下、黒率95%以上、元画像から0.1%に丸めます。黒帯モードで画像端に黒帯がない場合は、白い余白内の四辺のコマ枠を確認し、その内側までクロップします。</p>
-  <p class="muted">複製したシーケンスでお試しください。既存Cropの四辺は上書きします。選択・素材・検出モードを変えたら再解析してください。</p>
-  <p class="muted">Cropだけを変更します。拡大や位置変更は行いません。</p>
+  <p class="muted">旧版の標準Cropが残っている場合は、その四辺を0%に戻して二重の切り抜きを防ぎます。選択・素材・検出モードを変えたら再解析してください。</p>
+  <p class="muted">モーション内の切り抜き4項目だけに反映します。スケール・位置・回転・アンカーポイントは変更しません。</p>
   </div>
   <script src="dist/main.js"></script>
 </body>

@@ -84,7 +84,7 @@ function render() {
     const row = document.createElement("div");
     row.className = "result";
     text(row, `${index + 1}. ${record.name || "名称不明"}`, "name");
-    const label = record.state === "applied" ? "適用済み" : record.state === "ready" ? "適用待ち" : "スキップ／失敗";
+    const label = record.state === "applied" ? "適用済み：モーションの切り抜き" : record.state === "ready" ? "適用待ち" : "スキップ／失敗";
     text(row, record.error ? `${label}: ${record.error}` : label, record.error ? "error" : record.state === "applied" ? "success" : "");
     if (record.detection && record.detection.status === "ok") {
       const d = record.detection;
@@ -183,7 +183,7 @@ async function apply() {
     }
     const failures = targets.filter(record => record.state === "failed");
     el("status").className = failures.length ? "error" : "";
-    el("status").textContent = `${cancelled ? "適用中断" : "適用完了"}: 成功 ${applied} 件、失敗 ${failed} 件。Motionは未変更です。取り消しは編集メニューの「取り消し」で行えます。${failures.length ? `\n失敗理由: ${failures[0].error}\n下の「診断情報」の文章をコピーして送ってください。` : ""}`;
+    el("status").textContent = `${cancelled ? "適用中断" : "適用完了"}: 成功 ${applied} 件、失敗 ${failed} 件。反映先はモーションの切り抜きです。スケール・位置は変更していません。取り消しは編集メニューの「取り消し」で行えます。${failures.length ? `\n失敗理由: ${failures[0].error}\n下の「診断情報」の文章をコピーして送ってください。` : ""}`;
     if (failures.length) void refreshDiagnostics(failures);
   } finally {
     busy = false;

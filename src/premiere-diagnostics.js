@@ -214,7 +214,7 @@ async function collectPremiereDiagnostics(ppro, {
       }
       if (/motion|モーション/i.test(matchName) && sideHints.size === 4) intrinsicCropFound = true;
     }
-    append(`Motion内の四方向Crop名: ${intrinsicCropFound ? "検出（別エフェクトCropとは異なる構成）" : "この診断範囲では未確認"}`);
+    append(`Motion内の四方向Crop名: ${intrinsicCropFound ? "検出（モーション内の切り抜きへの適用先）" : "この診断範囲では未確認"}`);
     return lines.join("\n");
   }
 

@@ -1,7 +1,10 @@
 "use strict";
 
 const CROP_MATCH_NAMES = ["AE.ADBE AECrop", "AE.ADBE Crop", "PR.ADBE Crop", "ADBE Crop"];
+const MOTION_MATCH_NAMES = ["AE.ADBE Motion", "ADBE Motion", "PR.ADBE Motion"];
 const SIDES = ["left", "right", "top", "bottom"];
+const ZOOM_NAMES = ["zoom", "ズーム"];
+const FEATHER_NAMES = ["edgefeather", "エッジのぼかし", "境界のぼかし", "エッジの境界ぼかし", "エッジをぼかす"];
 
 function normalizeName(value) {
   return String(value || "").normalize("NFKC").toLowerCase().replace(/[\s()（）:：・_\-]/g, "");
@@ -14,10 +17,10 @@ const SIDE_NAMES = {
   bottom: ["bottom", "下", "下側", "下端"]
 };
 
-function sideForName(name) {
+function sideForName(name, qualified = false) {
   const normalized = normalizeName(name);
   return SIDES.find(side => SIDE_NAMES[side].some(label =>
-    normalized === label || normalized === `crop${label}` ||
+    (!qualified && normalized === label) || normalized === `crop${label}` ||
     normalized === `切り抜き${label}` || normalized === `クロップ${label}`
   ));
 }
@@ -38,7 +41,7 @@ async function numericValue(param) {
   const keyframe = await param.getStartValue();
   const value = keyframe && keyframe.value && keyframe.value.value;
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Crop の「${param.displayName}」の数値を取得できません。`);
+    throw new Error(`切り抜きの「${param.displayName}」の数値を取得できません。`);
   }
   return value;
 }
@@ -51,44 +54,78 @@ function transact(project, label, build) {
   if (!success) throw new Error(`${label} のトランザクションに失敗しました。`);
 }
 
-async function cropComponents(chain) {
-  const result = [];
+async function findTargets(chain) {
+  const motions = [];
+  const crops = [];
   const count = chain.getComponentCount();
   for (let i = 0; i < count; i++) {
     const component = chain.getComponentAtIndex(i);
-    if (CROP_MATCH_NAMES.includes(await component.getMatchName())) result.push(component);
+    const matchName = await component.getMatchName();
+    if (MOTION_MATCH_NAMES.includes(matchName)) motions.push(component);
+    if (CROP_MATCH_NAMES.includes(matchName)) crops.push({ component, matchName });
   }
-  return result;
+  return { motions, crops };
 }
 
-async function inspectCrop(component) {
+function parametersOf(component) {
+  return Array.from({ length: component.getParamCount() }, (_, index) => component.getParam(index));
+}
+
+async function inspectSides(parameters, label, qualified = false) {
   const params = {};
-  for (let i = 0; i < component.getParamCount(); i++) {
-    const param = component.getParam(i);
-    const side = sideForName(param.displayName);
+  for (const param of parameters) {
+    const side = sideForName(param.displayName, qualified);
     if (side) {
-      if (params[side]) throw new Error(`Crop の ${side} パラメータが重複しています。`);
-      if (param.isTimeVarying()) throw new Error("Crop にキーフレームがあります。対象の静止画をスキップしました。");
+      if (params[side]) throw new Error(`${label} の ${side} パラメータが重複しています。`);
+      if (param.isTimeVarying()) throw new Error(`${label} にキーフレームがあります。対象の静止画をスキップしました。`);
       params[side] = { param, value: await numericValue(param) };
-    } else {
-      const name = normalizeName(param.displayName);
-      if (["zoom", "ズーム"].includes(name)) {
-        if (param.isTimeVarying()) throw new Error("Crop のズームがアニメーションしています。");
-        const keyframe = await param.getStartValue();
-        const value = keyframe && keyframe.value && keyframe.value.value;
-        if (value !== false && value !== 0) throw new Error("Crop のズームをオフにしてから再実行してください。");
-      }
-      if (["edgefeather", "エッジのぼかし", "境界のぼかし", "エッジの境界ぼかし"].includes(name)) {
-        if (param.isTimeVarying() || await numericValue(param) !== 0) {
-          throw new Error("Crop の境界のぼかしを 0 にしてから再実行してください。");
-        }
-      }
     }
   }
   if (SIDES.some(side => !params[side])) {
-    throw new Error("Crop の Left / Right / Top / Bottom を識別できません。英語・日本語 UI の標準 Crop が必要です。");
+    throw new Error(`${label} の四方向の切り抜きを識別できません。この版はモーション内の切り抜き4項目が必要です。`);
   }
   return params;
+}
+
+async function inspectLegacyCrop({ component, matchName }) {
+  const parameters = parametersOf(component);
+  const params = await inspectSides(parameters, "既存Crop");
+  // The user supplied this exact six-parameter native schema. An unnamed
+  // Boolean in an arbitrary effect must never be guessed to mean Zoom.
+  const nativeSixParam = matchName === "AE.ADBE AECrop" && parameters.length === 6 &&
+    ["left", "top", "right", "bottom"].every((side, index) => sideForName(parameters[index].displayName) === side) &&
+    normalizeName(parameters[4].displayName) === "" &&
+    FEATHER_NAMES.includes(normalizeName(parameters[5].displayName));
+  for (const param of parameters) {
+    if (sideForName(param.displayName)) continue;
+    const name = normalizeName(param.displayName);
+    if (ZOOM_NAMES.includes(name) || (nativeSixParam && param === parameters[4])) {
+      if (param.isTimeVarying()) throw new Error("既存Cropのズームにキーフレームがあります。");
+      const keyframe = await param.getStartValue();
+      const value = keyframe && keyframe.value && keyframe.value.value;
+      if (value !== false && value !== 0) throw new Error("既存Cropのズームをオフにしてから再実行してください。");
+    } else if (FEATHER_NAMES.includes(name)) {
+      if (param.isTimeVarying() || await numericValue(param) !== 0) {
+        throw new Error("既存Cropの境界のぼかしを0にしてから再実行してください。");
+      }
+    } else {
+      throw new Error("既存Cropの構成を識別できません。既存Cropを確認してから再実行してください。");
+    }
+  }
+  return params;
+}
+
+function valueActions(writes, restore = false) {
+  return writes.map(({ param, before, after }) =>
+    param.createSetValueAction(param.createKeyframe(restore ? before : after), true));
+}
+
+async function verifyValues(writes, restore = false) {
+  for (const { param, before, after } of writes) {
+    if (Math.abs(await numericValue(param) - (restore ? before : after)) > 0.0001) {
+      throw new Error(`切り抜きの「${param.displayName}」を${restore ? "元に戻した後" : "設定後"}に検証できません。`);
+    }
+  }
 }
 
 function validateDetection(detection) {
@@ -156,93 +193,62 @@ function createPremiereHost(ppro) {
 
   async function applyCrop(context, record) {
     let stage = "analysis-validation";
-    let chain;
-    let component;
-    let created = false;
-    let params;
+    const writes = [];
     let attemptedValues = false;
     try {
       const percentages = validateDetection(record.detection);
       stage = "selection-context";
       await assertCurrent(context, record);
       stage = "chain-enumeration";
-      chain = await record.trackItem.getComponentChain();
-      let crops = await cropComponents(chain);
-      if (crops.length > 1) throw new Error("Crop が複数あります。対象の静止画をスキップしました。");
-      component = crops[0];
-      if (!component) {
-        stage = "crop-availability";
-        const available = await ppro.VideoFilterFactory.getMatchNames();
-        const matchName = CROP_MATCH_NAMES.find(name => available.includes(name));
-        if (!matchName) throw new Error("標準の Crop エフェクトが利用できません。");
-        stage = "crop-create";
-        const pending = await ppro.VideoFilterFactory.createComponent(matchName);
-        stage = "selection-context";
-        await assertCurrent(context, record);
-        stage = "crop-append";
-        const appendedIndex = chain.getComponentCount();
-        transact(context.project, "黒枠: Crop を追加", compound => {
-          compound.addAction(chain.createAppendComponentAction(pending));
-        });
-        created = true;
-        // Capture the appended instance synchronously before yielding again.
-        // The factory object can lack params until insertion has completed.
-        stage = "crop-reacquire";
-        component = chain.getComponentAtIndex(appendedIndex) || pending;
-        chain = await record.trackItem.getComponentChain();
-        crops = await cropComponents(chain);
-        if (crops.length !== 1) throw new Error("追加後の Crop を一意に取得できません。");
-        component = crops[0];
+      const chain = await record.trackItem.getComponentChain();
+      const { motions, crops } = await findTargets(chain);
+      stage = "motion-availability";
+      if (motions.length !== 1) {
+        throw new Error(motions.length
+          ? "モーションが複数あり、適用先を特定できません。"
+          : "モーションが見つかりません。この版はモーション内の切り抜き4項目へ適用します。");
       }
-      stage = "crop-parameter-inspection";
-      params = await inspectCrop(component);
+      stage = "motion-parameter-inspection";
+      const params = await inspectSides(parametersOf(motions[0]), "モーションの切り抜き", true);
+      for (const side of SIDES) {
+        writes.push({ param: params[side].param, before: params[side].value, after: percentages[side] });
+      }
+      stage = "legacy-crop-inspection";
+      if (crops.length > 1) throw new Error("既存Cropが複数あります。対象の静止画をスキップしました。");
+      if (crops.length) {
+        const legacy = await inspectLegacyCrop(crops[0]);
+        for (const side of SIDES) {
+          writes.push({ param: legacy[side].param, before: legacy[side].value, after: 0 });
+        }
+      }
       stage = "selection-context";
       await assertCurrent(context, record);
       stage = "value-transaction";
+      // Construct every action before entering the transaction. A preflight
+      // failure cannot leave a partially assembled native change behind.
+      const actions = valueActions(writes);
       attemptedValues = true;
-      transact(context.project, "黒枠: Crop 値を設定", compound => {
-        for (const side of SIDES) {
-          const param = params[side].param;
-          compound.addAction(param.createSetValueAction(param.createKeyframe(percentages[side]), true));
-        }
+      transact(context.project, "黒枠: モーションの切り抜きを設定", compound => {
+        for (const action of actions) compound.addAction(action);
       });
       stage = "readback";
-      for (const side of SIDES) {
-        if (Math.abs(await numericValue(params[side].param) - percentages[side]) > 0.0001) {
-          throw new Error(`Crop の ${side} を設定後に検証できません。`);
-        }
-      }
-      return { status: "applied", created, percentages: { ...percentages } };
+      await verifyValues(writes);
+      return {
+        status: "applied", target: "motion-crop", created: false,
+        legacyCropCleared: crops.length === 1, percentages: { ...percentages }
+      };
     } catch (error) {
       const failure = stageError(error, stage);
       let rollbackStage;
       try {
-        if (created && component) {
-          rollbackStage = "rollback-remove";
-          transact(context.project, "黒枠: 追加した Crop を取り消し", compound => {
-            compound.addAction(chain.createRemoveComponentAction(component));
-          });
-          rollbackStage = "rollback-remove-verification";
-          if ((await cropComponents(await record.trackItem.getComponentChain())).length) {
-            throw new Error("追加した Crop の削除を確認できません。");
-          }
-        } else if (!created && attemptedValues && params) {
+        if (attemptedValues) {
           rollbackStage = "rollback-values";
-          transact(context.project, "黒枠: Crop 値を元に戻す", compound => {
-            for (const side of SIDES) {
-              const { param, value } = params[side];
-              compound.addAction(param.createSetValueAction(param.createKeyframe(value), true));
-            }
+          const actions = valueActions(writes, true);
+          transact(context.project, "黒枠: 切り抜きの値を元に戻す", compound => {
+            for (const action of actions) compound.addAction(action);
           });
           rollbackStage = "rollback-values-readback";
-          for (const side of SIDES) {
-            if (Math.abs(await numericValue(params[side].param) - params[side].value) > 0.0001) {
-              throw new Error(`Crop の ${side} を元に戻せません。`);
-            }
-          }
-        } else if (created) {
-          rollbackStage = "rollback-identification";
-          throw new Error("追加したエフェクトを特定できません。");
+          await verifyValues(writes, true);
         }
       } catch (rollbackError) {
         const rollbackFailure = stageError(rollbackError, rollbackStage);

@@ -55,7 +55,7 @@ function fixture(options = {}) {
   const imports = {
     uxp: { entrypoints: { setup(value) { panel = value.panels.blackCropPanel; } }, storage: {} },
     premierepro: {},
-    "../manifest.json": { version: "0.1.4" },
+    "../manifest.json": { version: "0.1.5" },
     "./border-detection": { detectBorders: (image, mode) => {
       const result = mode === "panel-frame" ? detectPanelFrame(image) : detectBlackBorders(image);
       return options.detection || result;
@@ -153,6 +153,9 @@ test("panel initialization is idempotent and TIFF analyze/apply changes button s
   assert.equal(f.calls.apply.length, 1);
   assert.match(f.status(), /成功 1 件、失敗 0/);
   assert.match(f.results(), /適用済み/);
+  assert.match(f.results(), /適用済み：モーションの切り抜き/);
+  assert.match(f.status(), /反映先はモーションの切り抜き/);
+  assert.doesNotMatch(f.status(), /Motionは未変更/);
   assert.equal(f.nodes.get("apply").disabled, true);
   assert.equal(f.nodes.get("analyze").disabled, false);
 });
@@ -194,7 +197,7 @@ test("one apply failure is displayed and processing continues with remaining cli
   assert.match(f.results(), /シーケンスが変更/);
   assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
   assert.equal(f.calls.diagnostics, 1);
-  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.4/);
+  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.5/);
   assert.match(f.nodes.get("diagnostics").value, /Crop候補/);
   assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
   assert.equal(f.nodes.get("analyze").disabled, false);
@@ -266,7 +269,7 @@ test("changing detection mode invalidates pending analysis and uses the selected
   assert.equal(f.calls.apply[0].detection.percentages.left, 1);
 });
 
-test("white-margin fallback reports the actual method and applies only Crop values", async () => {
+test("white-margin fallback reports the actual method and applies crop values to Motion", async () => {
   const result = { ...detection("edge-bands"), method: "white-margin-frame-fallback" };
   const f = fixture({ detection: result });
   f.nodes.get("mode").value = "edge-bands";
