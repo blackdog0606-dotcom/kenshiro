@@ -55,7 +55,7 @@ function fixture(options = {}) {
   const imports = {
     uxp: { entrypoints: { setup(value) { panel = value.panels.blackCropPanel; } }, storage: {} },
     premierepro: {},
-    "../manifest.json": { version: "0.1.5" },
+    "../manifest.json": { version: "0.1.6" },
     "./border-detection": { detectBorders: (image, mode) => {
       const result = mode === "panel-frame" ? detectPanelFrame(image) : detectBlackBorders(image);
       return options.detection || result;
@@ -197,7 +197,7 @@ test("one apply failure is displayed and processing continues with remaining cli
   assert.match(f.results(), /シーケンスが変更/);
   assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
   assert.equal(f.calls.diagnostics, 1);
-  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.5/);
+  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.6/);
   assert.match(f.nodes.get("diagnostics").value, /Crop候補/);
   assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
   assert.equal(f.nodes.get("analyze").disabled, false);

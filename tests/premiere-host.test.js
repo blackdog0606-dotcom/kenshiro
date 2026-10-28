@@ -107,9 +107,12 @@ function fixture(options = {}) {
       assert.equal(locked, true, "native mutation must hold lockedAccess");
       calls.push(label);
       const actions = [];
-      const returned = callback({ addAction: action => actions.push(action) });
+      const transactionIndex = actionCounts.push(0) - 1;
+      const returned = callback({ addAction: action => {
+        actions.push(action);
+        actionCounts[transactionIndex]++;
+      } });
       assert.equal(returned instanceof Promise, false, "transaction callback must be synchronous");
-      actionCounts.push(actions.length);
       if (options.rejectSetTransaction && calls.length === 1) return false;
       if (options.rollbackFails && calls.length > 1) throw new Error("native rollback transaction failed");
       for (let index = 0; index < actions.length; index++) {
@@ -290,15 +293,20 @@ test("legacy Crop zeroing is read back and a failed legacy write restores both s
 
 for (const lastParamOptions of [{ failCreate: true }, { failKeyframe: true }]) {
   const failureType = lastParamOptions.failCreate ? "value action" : "keyframe";
-  test(`last planned legacy ${failureType} construction failure starts no transaction`, async () => {
+  const expectedStage = lastParamOptions.failCreate ? "value-action" : "value-keyframe";
+  const expectedOperation = lastParamOptions.failCreate ? "createSetValueAction" : "createKeyframe";
+  test(`last planned legacy ${failureType} construction failure queues no actions and changes no values`, async () => {
     const f = fixture({ legacy: true, legacyOptions: { lastParamOptions },
       motionOptions: { oldValues: [2, 3, 4, 5] } });
     await assert.rejects(apply(f), error => {
-      assert.equal(error.stage, "value-transaction");
+      assert.equal(error.stage, expectedStage);
       assert.match(error.message, /native .* construction failed/);
+      assert.ok(error.message.includes(`bottom: ${expectedOperation}`), "failure identifies the actual last write and native operation");
+      assert.match(error.cause.message, /native .* construction failed/);
       return true;
     });
-    assert.deepEqual(f.calls, []);
+    assert.deepEqual(f.calls, [SET_LABEL], "transaction callback entered once, with no rollback needed");
+    assert.deepEqual(f.actionCounts, [0], "all native actions must be constructed before any are queued");
     assert.deepEqual(f.motion.cropParams.map(param => param.value), [2, 3, 4, 5]);
     assert.deepEqual(f.legacy.cropParams.map(param => param.value), [7, 7, 7, 7]);
     assertGeometryUnchanged(f);

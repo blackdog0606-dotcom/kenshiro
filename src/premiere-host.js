@@ -38,19 +38,29 @@ function sameEntity(current, original, originalGuid) {
 }
 
 async function numericValue(param) {
+  const name = param.displayName;
   const keyframe = await param.getStartValue();
   const value = keyframe && keyframe.value && keyframe.value.value;
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`切り抜きの「${param.displayName}」の数値を取得できません。`);
+    throw new Error(`切り抜きの「${name}」の数値を取得できません。`);
   }
   return value;
 }
 
 function transact(project, label, build) {
   let success = false;
-  project.lockedAccess(() => {
-    success = project.executeTransaction(compound => build(compound), label);
-  });
+  let buildError;
+  try {
+    project.lockedAccess(() => {
+      success = project.executeTransaction(compound => {
+        try { return build(compound); }
+        catch (error) { buildError = error; throw error; }
+      }, label);
+    });
+  } catch (error) {
+    throw buildError || error;
+  }
+  if (buildError) throw buildError;
   if (!success) throw new Error(`${label} のトランザクションに失敗しました。`);
 }
 
@@ -61,45 +71,62 @@ async function findTargets(chain) {
   for (let i = 0; i < count; i++) {
     const component = chain.getComponentAtIndex(i);
     const matchName = await component.getMatchName();
-    if (MOTION_MATCH_NAMES.includes(matchName)) motions.push(component);
-    if (CROP_MATCH_NAMES.includes(matchName)) crops.push({ component, matchName });
+    if (MOTION_MATCH_NAMES.includes(matchName) || CROP_MATCH_NAMES.includes(matchName)) {
+      const target = { componentIndex: i, componentCount: count, paramCount: component.getParamCount(), matchName };
+      if (MOTION_MATCH_NAMES.includes(matchName)) motions.push(target);
+      else crops.push(target);
+    }
   }
   return { motions, crops };
 }
 
-function parametersOf(component) {
-  return Array.from({ length: component.getParamCount() }, (_, index) => component.getParam(index));
+function resolveParam(chain, target, paramIndex, expectedName) {
+  if (chain.getComponentCount() !== target.componentCount) throw new Error("エフェクト構成が変わりました。再解析してください。");
+  const component = chain.getComponentAtIndex(target.componentIndex);
+  if (!component || component.getParamCount() !== target.paramCount) {
+    throw new Error("切り抜きの項目構成が変わりました。再解析してください。");
+  }
+  const param = component.getParam(paramIndex);
+  if (!param || (expectedName !== undefined && normalizeName(param.displayName) !== normalizeName(expectedName))) {
+    throw new Error("切り抜きの項目名が変わりました。再解析してください。");
+  }
+  return { component, param };
 }
 
-async function inspectSides(parameters, label, qualified = false) {
+async function inspectSides(chain, target, label, qualified = false) {
   const params = {};
-  for (const param of parameters) {
-    const side = sideForName(param.displayName, qualified);
+  const names = [];
+  for (let paramIndex = 0; paramIndex < target.paramCount; paramIndex++) {
+    // Each asynchronous read gets a fresh wrapper. Only plain descriptors and
+    // numeric snapshots survive into later reads or the mutation transaction.
+    const { param } = resolveParam(chain, target, paramIndex);
+    const name = param.displayName;
+    names.push(name);
+    const side = sideForName(name, qualified);
     if (side) {
       if (params[side]) throw new Error(`${label} の ${side} パラメータが重複しています。`);
       if (param.isTimeVarying()) throw new Error(`${label} にキーフレームがあります。対象の静止画をスキップしました。`);
-      params[side] = { param, value: await numericValue(param) };
+      params[side] = { paramIndex, name, value: await numericValue(param) };
     }
   }
   if (SIDES.some(side => !params[side])) {
     throw new Error(`${label} の四方向の切り抜きを識別できません。この版はモーション内の切り抜き4項目が必要です。`);
   }
-  return params;
+  return { params, names };
 }
 
-async function inspectLegacyCrop({ component, matchName }) {
-  const parameters = parametersOf(component);
-  const params = await inspectSides(parameters, "既存Crop");
+async function inspectLegacyCrop(chain, target) {
+  const { params, names } = await inspectSides(chain, target, "既存Crop");
   // The user supplied this exact six-parameter native schema. An unnamed
   // Boolean in an arbitrary effect must never be guessed to mean Zoom.
-  const nativeSixParam = matchName === "AE.ADBE AECrop" && parameters.length === 6 &&
-    ["left", "top", "right", "bottom"].every((side, index) => sideForName(parameters[index].displayName) === side) &&
-    normalizeName(parameters[4].displayName) === "" &&
-    FEATHER_NAMES.includes(normalizeName(parameters[5].displayName));
-  for (const param of parameters) {
-    if (sideForName(param.displayName)) continue;
-    const name = normalizeName(param.displayName);
-    if (ZOOM_NAMES.includes(name) || (nativeSixParam && param === parameters[4])) {
+  const nativeSixParam = target.matchName === "AE.ADBE AECrop" && names.length === 6 &&
+    ["left", "top", "right", "bottom"].every((side, index) => sideForName(names[index]) === side) &&
+    normalizeName(names[4]) === "" && FEATHER_NAMES.includes(normalizeName(names[5]));
+  for (let paramIndex = 0; paramIndex < names.length; paramIndex++) {
+    if (sideForName(names[paramIndex])) continue;
+    const { param } = resolveParam(chain, target, paramIndex, names[paramIndex]);
+    const name = normalizeName(names[paramIndex]);
+    if (ZOOM_NAMES.includes(name) || (nativeSixParam && paramIndex === 4)) {
       if (param.isTimeVarying()) throw new Error("既存Cropのズームにキーフレームがあります。");
       const keyframe = await param.getStartValue();
       const value = keyframe && keyframe.value && keyframe.value.value;
@@ -115,15 +142,29 @@ async function inspectLegacyCrop({ component, matchName }) {
   return params;
 }
 
-function valueActions(writes, restore = false) {
-  return writes.map(({ param, before, after }) =>
-    param.createSetValueAction(param.createKeyframe(restore ? before : after), true));
+function valueActions(chain, writes, restore, step) {
+  return writes.map(write => {
+    const { target, paramIndex, name, before, after, label, side } = write;
+    const detail = `${label} ${side}`;
+    step("value-target", `${detail}: getParam`);
+    const { component, param } = resolveParam(chain, target, paramIndex, name);
+    if (param.isTimeVarying()) throw new Error(`${label}にキーフレームがあります。再解析してください。`);
+    step("value-keyframe", `${detail}: createKeyframe`);
+    const keyframe = param.createKeyframe(restore ? before : after);
+    step("value-action", `${detail}: createSetValueAction`);
+    const action = param.createSetValueAction(keyframe, true);
+    // Keep native parents and keyframes alive along with their actions until
+    // the synchronous transaction callback has queued every action.
+    return { component, param, keyframe, action, detail };
+  });
 }
 
-async function verifyValues(writes, restore = false) {
-  for (const { param, before, after } of writes) {
+async function verifyValues(trackItem, writes, restore = false) {
+  const chain = await trackItem.getComponentChain();
+  for (const { target, paramIndex, name, before, after } of writes) {
+    const { param } = resolveParam(chain, target, paramIndex, name);
     if (Math.abs(await numericValue(param) - (restore ? before : after)) > 0.0001) {
-      throw new Error(`切り抜きの「${param.displayName}」を${restore ? "元に戻した後" : "設定後"}に検証できません。`);
+      throw new Error(`切り抜きの「${name}」を${restore ? "元に戻した後" : "設定後"}に検証できません。`);
     }
   }
 }
@@ -140,9 +181,9 @@ function validateDetection(detection) {
   return values;
 }
 
-function stageError(error, stage) {
+function stageError(error, stage, detail = "") {
   const message = error && typeof error.message === "string" ? error.message : String(error);
-  const wrapped = new Error(`[Crop適用: ${stage}] ${message}`);
+  const wrapped = new Error(`[Crop適用: ${stage}] ${detail ? `${detail}: ` : ""}${message}`);
   wrapped.stage = stage;
   wrapped.cause = error;
   return wrapped;
@@ -189,10 +230,12 @@ function createPremiereHost(ppro) {
         await currentClip.getMediaFilePath() !== record.path) {
       throw new Error("解析後に元画像が変更されたかオフラインになりました。再解析してください。");
     }
+    return project;
   }
 
   async function applyCrop(context, record) {
     let stage = "analysis-validation";
+    let detail = "";
     const writes = [];
     let attemptedValues = false;
     try {
@@ -209,49 +252,68 @@ function createPremiereHost(ppro) {
           : "モーションが見つかりません。この版はモーション内の切り抜き4項目へ適用します。");
       }
       stage = "motion-parameter-inspection";
-      const params = await inspectSides(parametersOf(motions[0]), "モーションの切り抜き", true);
+      const { params } = await inspectSides(chain, motions[0], "モーションの切り抜き", true);
       for (const side of SIDES) {
-        writes.push({ param: params[side].param, before: params[side].value, after: percentages[side] });
+        writes.push({ target: motions[0], paramIndex: params[side].paramIndex, name: params[side].name,
+          label: "モーション", side, before: params[side].value, after: percentages[side] });
       }
       stage = "legacy-crop-inspection";
       if (crops.length > 1) throw new Error("既存Cropが複数あります。対象の静止画をスキップしました。");
       if (crops.length) {
-        const legacy = await inspectLegacyCrop(crops[0]);
+        const legacy = await inspectLegacyCrop(chain, crops[0]);
         for (const side of SIDES) {
-          writes.push({ param: legacy[side].param, before: legacy[side].value, after: 0 });
+          writes.push({ target: crops[0], paramIndex: legacy[side].paramIndex, name: legacy[side].name,
+            label: "既存Crop", side, before: legacy[side].value, after: 0 });
         }
       }
       stage = "selection-context";
-      await assertCurrent(context, record);
+      const project = await assertCurrent(context, record);
+      const writeChain = await record.trackItem.getComponentChain();
       stage = "value-transaction";
-      // Construct every action before entering the transaction. A preflight
-      // failure cannot leave a partially assembled native change behind.
-      const actions = valueActions(writes);
-      attemptedValues = true;
-      transact(context.project, "黒枠: モーションの切り抜きを設定", compound => {
-        for (const action of actions) compound.addAction(action);
+      // Follow Adobe's native sample: resolve current wrappers under the lock,
+      // create actions inside executeTransaction, then queue them synchronously.
+      transact(project, "黒枠: モーションの切り抜きを設定", compound => {
+        const inputs = valueActions(writeChain, writes, false, (operation, target) => {
+          stage = operation; detail = target;
+        });
+        attemptedValues = true;
+        for (const input of inputs) {
+          stage = "value-add-action"; detail = input.detail;
+          compound.addAction(input.action);
+        }
+        stage = "value-transaction"; detail = "";
       });
       stage = "readback";
-      await verifyValues(writes);
+      detail = "";
+      await verifyValues(record.trackItem, writes);
       return {
         status: "applied", target: "motion-crop", created: false,
         legacyCropCleared: crops.length === 1, percentages: { ...percentages }
       };
     } catch (error) {
-      const failure = stageError(error, stage);
+      const failure = stageError(error, stage, detail);
       let rollbackStage;
+      let rollbackDetail = "";
       try {
         if (attemptedValues) {
           rollbackStage = "rollback-values";
-          const actions = valueActions(writes, true);
-          transact(context.project, "黒枠: 切り抜きの値を元に戻す", compound => {
-            for (const action of actions) compound.addAction(action);
+          const project = await assertCurrent(context, record);
+          const rollbackChain = await record.trackItem.getComponentChain();
+          transact(project, "黒枠: 切り抜きの値を元に戻す", compound => {
+            const inputs = valueActions(rollbackChain, writes, true, (operation, target) => {
+              rollbackDetail = `${target} (${operation})`;
+            });
+            for (const input of inputs) {
+              rollbackDetail = `${input.detail}: addAction`;
+              compound.addAction(input.action);
+            }
+            rollbackDetail = "";
           });
           rollbackStage = "rollback-values-readback";
-          await verifyValues(writes, true);
+          await verifyValues(record.trackItem, writes, true);
         }
       } catch (rollbackError) {
-        const rollbackFailure = stageError(rollbackError, rollbackStage);
+        const rollbackFailure = stageError(rollbackError, rollbackStage, rollbackDetail);
         const combined = new Error(`${failure.message} 取り消しにも失敗しました: ${rollbackFailure.message}。Premiere Pro で Undo とエフェクト状態を確認してください。`);
         combined.stage = stage;
         combined.cause = failure;
