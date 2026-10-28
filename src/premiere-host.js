@@ -1,6 +1,6 @@
 "use strict";
 
-const CROP_MATCH_NAMES = ["AE.ADBE Crop", "PR.ADBE Crop", "ADBE Crop"];
+const CROP_MATCH_NAMES = ["AE.ADBE AECrop", "AE.ADBE Crop", "PR.ADBE Crop", "ADBE Crop"];
 const SIDES = ["left", "right", "top", "bottom"];
 
 function normalizeName(value) {

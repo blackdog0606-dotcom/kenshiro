@@ -127,6 +127,15 @@ test("reports missing exact Crop names without dumping unrelated factory names",
   assert.doesNotMatch(result, /Vendor\.CustomSensitiveEffect/);
 });
 
+test("recognizes the exact standard Crop identity reported by Premiere 26.5.2", async () => {
+  const f = sdk({ names: ["AE.ADBE AECrop", "AE.Impact_Crop_FX"] });
+  const result = await collectPremiereDiagnostics(f.ppro);
+  assert.match(result, /Crop候補: 2 件/);
+  assert.match(result, /完全一致: AE\.ADBE AECrop(?:\n|$)/);
+  assert.doesNotMatch(result, /完全一致:.*Impact/);
+  assert.equal(f.calls.writes, 0);
+});
+
 test("bounds diagnostics to eight components and thirty-two parameters each", async () => {
   const f = sdk({ componentCount: 100, paramCount: 100 });
   const result = await collectPremiereDiagnostics(f.ppro);

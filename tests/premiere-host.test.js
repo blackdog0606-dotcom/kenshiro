@@ -31,7 +31,7 @@ function makeCrop(labels = ["Left", "Right", "Top", "Bottom"], options = {}) {
   params.push(makeParam("Edge Feather", options.feather || 0));
   return {
     params,
-    getMatchName: async () => "AE.ADBE Crop",
+    getMatchName: async () => options.matchName || "AE.ADBE Crop",
     getParamCount: () => params.length,
     getParam: index => params[index]
   };
@@ -41,6 +41,7 @@ function fixture(options = {}) {
   const components = options.existing === false ? [] : [makeCrop(options.labels, options)];
   if (options.duplicate) components.push(makeCrop());
   const calls = [];
+  const factoryCalls = [];
   const state = { path: "/images/still.png", offline: false, nested: false };
   const clip = {
     isSequence: async () => state.nested,
@@ -52,7 +53,7 @@ function fixture(options = {}) {
     getComponentAtIndex: index => components[index],
     createAppendComponentAction: pending => () => {
       assert.equal(pending.pending, true, "factory object is not an inserted Component");
-      components.push(makeCrop(options.newLabels, options.newOptions));
+      components.push(makeCrop(options.newLabels, { ...options.newOptions, matchName: pending.matchName }));
     },
     createRemoveComponentAction: component => () => {
       if (options.rollbackFails) throw new Error("remove failed");
@@ -95,11 +96,14 @@ function fixture(options = {}) {
         if (options.availableThrows) throw options.availableThrows;
         return options.available || ["AE.ADBE Crop"];
       },
-      createComponent: async () => ({ pending: true })
+      createComponent: async matchName => {
+        factoryCalls.push(matchName);
+        return { pending: true, matchName };
+      }
     }
   };
   return {
-    host: createPremiereHost(ppro), project, sequence, state, components, calls, trackItem,
+    host: createPremiereHost(ppro), project, sequence, state, components, calls, factoryCalls, trackItem,
     changeSequence: () => { currentSequence = { guid: "sequence-2" }; },
     changeProject: () => { currentProject = { guid: "project-2" }; }
   };
@@ -134,6 +138,47 @@ test("identifies Japanese side labels and uses labels rather than parameter indi
   const { context, record } = await prepared(f);
   await f.host.applyCrop(context, record);
   assert.deepEqual(f.components[0].params.slice(0, 4).map(p => p.value), [4.5, 1.2, 3.4, 2.3]);
+});
+
+test("uses the native AE.ADBE AECrop instead of third-party Crop and repeated apply adds no duplicate", async () => {
+  const f = fixture({
+    existing: false,
+    available: ["AE.Impact_Crop_FX", "AE.ADBE AECrop"],
+    newLabels: ["切り抜き(左端)", "切り抜き(上端)", "切り抜き(右端)", "切り抜き(下端)"]
+  });
+  const { context, record } = await prepared(f);
+  assert.equal((await f.host.applyCrop(context, record)).created, true);
+  assert.deepEqual(f.factoryCalls, ["AE.ADBE AECrop"]);
+  assert.equal(await f.components[0].getMatchName(), "AE.ADBE AECrop");
+  assert.deepEqual(f.components[0].params.slice(0, 4).map(p => p.value), [1.2, 3.4, 2.3, 4.5]);
+  assert.equal((await f.host.applyCrop(context, record)).created, false);
+  assert.deepEqual(f.factoryCalls, ["AE.ADBE AECrop"]);
+  assert.equal(f.components.length, 1);
+  assert.deepEqual(f.calls, ["黒枠: Crop を追加", "黒枠: Crop 値を設定", "黒枠: Crop 値を設定"]);
+});
+
+test("recognizes an existing native AE.ADBE AECrop and writes its four percentages without factory creation", async () => {
+  const f = fixture({ matchName: "AE.ADBE AECrop", oldValue: 7 });
+  const { context, record } = await prepared(f);
+  const result = await f.host.applyCrop(context, record);
+  assert.equal(result.created, false);
+  assert.equal(f.components.length, 1);
+  assert.deepEqual(f.components[0].params.slice(0, 4).map(p => p.value), Object.values(percentages));
+  assert.deepEqual(f.factoryCalls, []);
+  assert.deepEqual(f.calls, ["黒枠: Crop 値を設定"]);
+});
+
+test("does not substitute AE.Impact_Crop_FX when standard Crop is unavailable", async () => {
+  const f = fixture({ existing: false, available: ["AE.Impact_Crop_FX"] });
+  const { context, record } = await prepared(f);
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "crop-availability");
+    assert.match(error.message, /標準の Crop エフェクトが利用できません/);
+    return true;
+  });
+  assert.deepEqual(f.factoryCalls, []);
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.components.length, 0);
 });
 
 for (const [name, options, message] of [

@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { version } = require("../manifest.json");
 
 // Run the independent startup guard exactly as a plain HTML script. No UXP,
 // Premiere, CommonJS loader or bundled application is supplied to this VM.
@@ -72,7 +73,7 @@ test("standalone bootstrap loads without an SDK or require and announces its ver
   assert.equal(f.boot.initialized, false);
   assert.equal(typeof f.boot.markReady, "function");
   assert.equal(typeof f.boot.reportError, "function");
-  assert.ok(f.logs.some(line => /\[Kenshiro\].*bootstrap v0\.1\.2/.test(line)));
+  assert.ok(f.logs.some(line => line.includes(`[Kenshiro] bootstrap v${version}`)));
   assert.equal(f.timers.length, 1);
   assert.equal(f.timers[0].delay, 2000);
 });
@@ -81,10 +82,10 @@ test("markReady displays initialized status and cancels the stalled-start watchd
   const f = fixture();
   f.boot.markReady();
   assert.equal(f.boot.initialized, true);
-  assert.match(f.status(), /起動済み v0\.1\.2/);
+  assert.equal(f.status(), `起動済み v${version}`);
   assert.equal(f.timers[0].cancelled, true);
   f.watchdog();
-  assert.match(f.status(), /起動済み v0\.1\.2/);
+  assert.equal(f.status(), `起動済み v${version}`);
   assert.equal(f.diagnostics(), "");
   assert.equal(f.errors.length, 0);
 });

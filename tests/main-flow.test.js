@@ -55,7 +55,7 @@ function fixture(options = {}) {
   const imports = {
     uxp: { entrypoints: { setup(value) { panel = value.panels.blackCropPanel; } }, storage: {} },
     premierepro: {},
-    "../manifest.json": { version: "0.1.2" },
+    "../manifest.json": { version: "0.1.3" },
     "./premiere-diagnostics": { collectPremiereDiagnostics: async () => {
       calls.diagnostics++;
       if (options.diagnosticsWait) await options.diagnosticsWait;
@@ -190,7 +190,7 @@ test("one apply failure is displayed and processing continues with remaining cli
   assert.match(f.results(), /シーケンスが変更/);
   assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
   assert.equal(f.calls.diagnostics, 1);
-  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.2/);
+  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.3/);
   assert.match(f.nodes.get("diagnostics").value, /Crop候補/);
   assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
   assert.equal(f.nodes.get("analyze").disabled, false);

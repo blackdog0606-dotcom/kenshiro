@@ -1,6 +1,6 @@
 "use strict";
 
-const KNOWN_CROP_NAMES = ["AE.ADBE Crop", "PR.ADBE Crop", "ADBE Crop"];
+const KNOWN_CROP_NAMES = ["AE.ADBE AECrop", "AE.ADBE Crop", "PR.ADBE Crop", "ADBE Crop"];
 const MAX_COMPONENTS = 8;
 const MAX_PARAMS = 32;
 const MAX_FACTORY_NAMES = 40;
