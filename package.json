@@ -1,0 +1,22 @@
+{
+  "name": "kenshiro-black-border-crop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Premiere Pro UXP still-image black-border crop MVP",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --platform=browser --format=iife --external:uxp --external:premierepro --outfile=dist/main.js",
+    "test": "node scripts/run-tests.js",
+    "samples": "node scripts/create-samples.js",
+    "samples:tiff": "node scripts/create-samples.js --tiff",
+    "samples:panels": "node scripts/create-panel-samples.js",
+    "check": "npm test && npm run build"
+  },
+  "dependencies": {
+    "jpeg-js": "0.4.4",
+    "upng-js": "2.1.0",
+    "utif": "3.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

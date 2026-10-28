@@ -1,0 +1,14 @@
+body { padding: 14px; color: #ececec; background: #272727; font-size: 12px; }
+h1 { font-size: 18px; margin: 0 0 12px; }
+p { line-height: 1.6; margin: 8px 0; }
+.muted { color: #bdbdbd; font-size: 11px; }
+.actions { display: flex; flex-wrap: wrap; margin: 14px 0; }
+button { margin: 0 6px 8px 0; padding: 6px 10px; }
+select { margin: 6px 0; width: 100%; }
+#status { color: #b7dcff; }
+#results { max-height: 420px; overflow-y: auto; }
+.result { border: 1px solid #555; border-radius: 4px; padding: 10px; margin-bottom: 8px; }
+.name { font-weight: bold; margin-bottom: 5px; }
+.values { color: #cbe5ff; margin-top: 5px; }
+.error { color: #ffbfad; }
+.success { color: #b5e2b3; }

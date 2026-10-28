@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.ccx
+.DS_Store
+test-images/
+test-images-tiff/
+test-panels/
+release/
