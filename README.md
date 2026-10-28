@@ -1,6 +1,18 @@
 # Kenshiro 黒枠自動クロップ・最小版
 
-**[ビルド済みZIPをダウンロード](https://github.com/blackdog0606-dotcom/kenshiro/raw/refs/heads/main/downloads/kenshiro-blackcrop-mvp.zip)**（約224KB・テスト用TIF10枚付き）。解凍後、UXP Developer Tool の **Add Plugin** で `kenshiro-blackcrop-mvp/manifest.json` を指定してください。
+**[v0.1.1 診断版ZIPをダウンロード](https://github.com/blackdog0606-dotcom/kenshiro/raw/refs/heads/main/downloads/kenshiro-blackcrop-mvp-0.1.1.zip)**（テスト用TIF10枚付き）。解凍後、UXP Developer Tool の **Add Plugin** で `kenshiro-blackcrop-mvp-0.1.1/manifest.json` を指定してください。
+
+v0.1.1は、解析後の適用失敗の理由を画面上部へ表示する診断用の更新です。Premiere Pro 26.5.2で「解析成功・適用失敗」の報告があり、適用失敗の原因はまだ特定できていません。Crop適用の不具合そのものが解決したとは未確認です。
+
+### v0.1.0からの更新と診断
+
+1. UXP Developer Toolで旧版を **Unload** し、**Remove** で登録を解除します。
+2. 新しいZIPを解凍し、**Add Plugin** で新しいフォルダー内の `manifest.json` を指定して **Load** します。
+3. パネルの見出しが **黒枠自動クロップ v0.1.1** になっていることを確認します。
+4. 静止画1枚を選択し、解析→適用します。
+5. 失敗したら、件数の直下に出る **失敗理由** と、その下の **診断情報** 欄の文章をコピーして報告してください。診断欄をクリックして Ctrl+A（MacはCmd+A）で選択し、コピーできます。
+
+診断情報は選択中の先頭ビデオクリップについて、利用可能なCrop名・エフェクト名・パラメータ名・値の型と数値／真偽値を読み取ります。診断ボタン単独ではエフェクトを変更しません。素材パス、プロジェクト名、任意のテキスト値は収集せず、自動送信もしません。
 
 Premiere Pro **25.6以降**用のUXPパネルです。タイムラインで選択した静止画を元画像から解析し、標準 **Crop（クロップ）** の Left / Right / Top / Bottom を一括設定します。**白い余白＋内側の黒いコマ枠を除去するモード**を初期設定にしています。画像端の黒帯だけを検出するモードも選べます。既存プラグインのコードが未登録のため、単体プラグインとして作成しています。
 

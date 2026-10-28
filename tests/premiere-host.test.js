@@ -10,7 +10,10 @@ function makeParam(displayName, value = 0, options = {}) {
   return {
     displayName, value,
     isTimeVarying: () => Boolean(options.animated),
-    async getStartValue() { return { value: { value: this.value } }; },
+    async getStartValue() {
+      if (options.startValueThrows) throw options.startValueThrows;
+      return { value: { value: this.value } };
+    },
     createKeyframe: value => ({ value: { value } }),
     createSetValueAction(keyframe) {
       return () => {
@@ -88,7 +91,10 @@ function fixture(options = {}) {
     VideoClipTrackItem,
     ClipProjectItem: { cast: value => value },
     VideoFilterFactory: {
-      getMatchNames: async () => options.available || ["AE.ADBE Crop"],
+      getMatchNames: async () => {
+        if (options.availableThrows) throw options.availableThrows;
+        return options.available || ["AE.ADBE Crop"];
+      },
       createComponent: async () => ({ pending: true })
     }
   };
@@ -232,5 +238,81 @@ test("reports missing standard Crop rather than guessing another effect", async 
   const f = fixture({ existing: false, available: ["AE.ADBE Other"] });
   const { context, record } = await prepared(f);
   await assert.rejects(f.host.applyCrop(context, record), /利用できません/);
+  assert.deepEqual(f.calls, []);
+});
+
+test("tags a native Crop lookup failure with its stage without mutating the timeline", async () => {
+  const native = new Error("native filter catalog unavailable");
+  const f = fixture({ existing: false, availableThrows: native });
+  const { context, record } = await prepared(f);
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "crop-availability");
+    assert.equal(error.cause, native);
+    assert.match(error.message, /\[Crop適用: crop-availability\].*native filter catalog unavailable/);
+    return true;
+  });
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.components.length, 0);
+});
+
+test("tags a native getStartValue failure during parameter inspection before any value change", async () => {
+  const native = new Error("native keyframe start value read failed");
+  const f = fixture({ startValueThrows: native, oldValue: 7 });
+  const { context, record } = await prepared(f);
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "crop-parameter-inspection");
+    assert.equal(error.cause, native);
+    assert.match(error.message, /\[Crop適用: crop-parameter-inspection\].*native keyframe start value read failed/);
+    return true;
+  });
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.components[0].params.slice(0, 4).map(p => p.value), [7, 7, 7, 7]);
+});
+
+test("new Crop inspection failure preserves native stage after removing the new effect", async () => {
+  const native = new Error("new native keyframe read failed");
+  const f = fixture({ existing: false, newOptions: { startValueThrows: native } });
+  const { context, record } = await prepared(f);
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "crop-parameter-inspection");
+    assert.equal(error.cause, native);
+    assert.match(error.message, /new native keyframe read failed/);
+    return true;
+  });
+  assert.equal(f.components.length, 0);
+  assert.deepEqual(f.calls, ["黒枠: Crop を追加", "黒枠: 追加した Crop を取り消し"]);
+});
+
+test("rollback failure retains both the original native stage and rollback stage", async () => {
+  const native = new Error("native inspection failure");
+  const f = fixture({ existing: false, newOptions: { startValueThrows: native }, rollbackFails: true });
+  const { context, record } = await prepared(f);
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "crop-parameter-inspection");
+    assert.equal(error.cause.cause, native);
+    assert.equal(error.rollbackError.stage, "rollback-remove");
+    assert.match(error.message, /crop-parameter-inspection.*native inspection failure/);
+    assert.match(error.message, /取り消しにも失敗.*rollback-remove.*remove failed.*Undo/);
+    return true;
+  });
+  assert.equal(f.components.length, 1);
+});
+
+test("tags chain-enumeration and selection-context prerequisite failures without writes", async () => {
+  const f = fixture();
+  const { context, record } = await prepared(f);
+  const native = new Error("native component chain unavailable");
+  f.trackItem.getComponentChain = async () => { throw native; };
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "chain-enumeration");
+    assert.equal(error.cause, native);
+    return true;
+  });
+  f.changeSequence();
+  await assert.rejects(f.host.applyCrop(context, record), error => {
+    assert.equal(error.stage, "selection-context");
+    assert.match(error.message, /シーケンスが変更/);
+    return true;
+  });
   assert.deepEqual(f.calls, []);
 });

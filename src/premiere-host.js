@@ -103,6 +103,14 @@ function validateDetection(detection) {
   return values;
 }
 
+function stageError(error, stage) {
+  const message = error && typeof error.message === "string" ? error.message : String(error);
+  const wrapped = new Error(`[Crop適用: ${stage}] ${message}`);
+  wrapped.stage = stage;
+  wrapped.cause = error;
+  return wrapped;
+}
+
 function createPremiereHost(ppro) {
   async function getSelection() {
     const project = await ppro.Project.getActiveProject();
@@ -147,22 +155,31 @@ function createPremiereHost(ppro) {
   }
 
   async function applyCrop(context, record) {
-    const percentages = validateDetection(record.detection);
-    await assertCurrent(context, record);
-    let chain = await record.trackItem.getComponentChain();
-    let crops = await cropComponents(chain);
-    if (crops.length > 1) throw new Error("Crop が複数あります。対象の静止画をスキップしました。");
-    let component = crops[0];
+    let stage = "analysis-validation";
+    let chain;
+    let component;
     let created = false;
     let params;
     let attemptedValues = false;
     try {
+      const percentages = validateDetection(record.detection);
+      stage = "selection-context";
+      await assertCurrent(context, record);
+      stage = "chain-enumeration";
+      chain = await record.trackItem.getComponentChain();
+      let crops = await cropComponents(chain);
+      if (crops.length > 1) throw new Error("Crop が複数あります。対象の静止画をスキップしました。");
+      component = crops[0];
       if (!component) {
+        stage = "crop-availability";
         const available = await ppro.VideoFilterFactory.getMatchNames();
         const matchName = CROP_MATCH_NAMES.find(name => available.includes(name));
         if (!matchName) throw new Error("標準の Crop エフェクトが利用できません。");
+        stage = "crop-create";
         const pending = await ppro.VideoFilterFactory.createComponent(matchName);
+        stage = "selection-context";
         await assertCurrent(context, record);
+        stage = "crop-append";
         const appendedIndex = chain.getComponentCount();
         transact(context.project, "黒枠: Crop を追加", compound => {
           compound.addAction(chain.createAppendComponentAction(pending));
@@ -170,14 +187,18 @@ function createPremiereHost(ppro) {
         created = true;
         // Capture the appended instance synchronously before yielding again.
         // The factory object can lack params until insertion has completed.
+        stage = "crop-reacquire";
         component = chain.getComponentAtIndex(appendedIndex) || pending;
         chain = await record.trackItem.getComponentChain();
         crops = await cropComponents(chain);
         if (crops.length !== 1) throw new Error("追加後の Crop を一意に取得できません。");
         component = crops[0];
       }
+      stage = "crop-parameter-inspection";
       params = await inspectCrop(component);
+      stage = "selection-context";
       await assertCurrent(context, record);
+      stage = "value-transaction";
       attemptedValues = true;
       transact(context.project, "黒枠: Crop 値を設定", compound => {
         for (const side of SIDES) {
@@ -185,6 +206,7 @@ function createPremiereHost(ppro) {
           compound.addAction(param.createSetValueAction(param.createKeyframe(percentages[side]), true));
         }
       });
+      stage = "readback";
       for (const side of SIDES) {
         if (Math.abs(await numericValue(params[side].param) - percentages[side]) > 0.0001) {
           throw new Error(`Crop の ${side} を設定後に検証できません。`);
@@ -192,33 +214,45 @@ function createPremiereHost(ppro) {
       }
       return { status: "applied", created, percentages: { ...percentages } };
     } catch (error) {
+      const failure = stageError(error, stage);
+      let rollbackStage;
       try {
         if (created && component) {
+          rollbackStage = "rollback-remove";
           transact(context.project, "黒枠: 追加した Crop を取り消し", compound => {
             compound.addAction(chain.createRemoveComponentAction(component));
           });
+          rollbackStage = "rollback-remove-verification";
           if ((await cropComponents(await record.trackItem.getComponentChain())).length) {
             throw new Error("追加した Crop の削除を確認できません。");
           }
         } else if (!created && attemptedValues && params) {
+          rollbackStage = "rollback-values";
           transact(context.project, "黒枠: Crop 値を元に戻す", compound => {
             for (const side of SIDES) {
               const { param, value } = params[side];
               compound.addAction(param.createSetValueAction(param.createKeyframe(value), true));
             }
           });
+          rollbackStage = "rollback-values-readback";
           for (const side of SIDES) {
             if (Math.abs(await numericValue(params[side].param) - params[side].value) > 0.0001) {
               throw new Error(`Crop の ${side} を元に戻せません。`);
             }
           }
         } else if (created) {
+          rollbackStage = "rollback-identification";
           throw new Error("追加したエフェクトを特定できません。");
         }
       } catch (rollbackError) {
-        throw new Error(`${error.message} 取り消しにも失敗しました: ${rollbackError.message}。Premiere Pro で Undo とエフェクト状態を確認してください。`);
+        const rollbackFailure = stageError(rollbackError, rollbackStage);
+        const combined = new Error(`${failure.message} 取り消しにも失敗しました: ${rollbackFailure.message}。Premiere Pro で Undo とエフェクト状態を確認してください。`);
+        combined.stage = stage;
+        combined.cause = failure;
+        combined.rollbackError = rollbackFailure;
+        throw combined;
       }
-      throw error;
+      throw failure;
     }
   }
 

@@ -35,12 +35,12 @@ function detection(mode) {
 }
 
 function fixture(options = {}) {
-  const nodes = new Map(["analyze", "apply", "cancel", "mode", "status", "results"].map(id => [id, element()]));
+  const nodes = new Map(["analyze", "apply", "cancel", "mode", "status", "results", "diagnose", "diagnostics"].map(id => [id, element()]));
   nodes.get("mode").value = "panel-frame";
   const items = Array.from({ length: options.count || 1 }, (_, index) => ({
     name: `sample-${index + 1}.tif`, path: `/images/sample-${index + 1}.tif`, trackItem: { index }
   }));
-  const calls = { read: [], verify: [], apply: [], panel: 0, edges: 0 };
+  const calls = { read: [], verify: [], apply: [], panel: 0, edges: 0, diagnostics: 0 };
   let panel;
   let api;
   const context = {
@@ -52,6 +52,12 @@ function fixture(options = {}) {
   const imports = {
     uxp: { entrypoints: { setup(value) { panel = value.panels.blackCropPanel; } }, storage: {} },
     premierepro: {},
+    "../manifest.json": { version: "0.1.1" },
+    "./premiere-diagnostics": { collectPremiereDiagnostics: async () => {
+      calls.diagnostics++;
+      if (options.diagnosticsError) throw new Error("診断APIを読み取れません。");
+      return "Crop候補: AE.ADBE Crop\n構成: ADBE Motion";
+    } },
     "./premiere-host": { createPremiereHost: () => ({
       getSelection: async () => {
         if (options.selectionWait) await options.selectionWait;
@@ -172,6 +178,11 @@ test("one apply failure is displayed and processing continues with remaining cli
   assert.equal(f.calls.apply.length, 3);
   assert.match(f.status(), /成功 2 件、失敗 1/);
   assert.match(f.results(), /シーケンスが変更/);
+  assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
+  assert.equal(f.calls.diagnostics, 1);
+  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.1/);
+  assert.match(f.nodes.get("diagnostics").value, /Crop候補/);
+  assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
   assert.equal(f.nodes.get("analyze").disabled, false);
 });
 
@@ -184,6 +195,27 @@ test("more than ten selected clips never read source files or apply effects", as
   assert.equal(f.calls.verify.length, 0);
   assert.equal(f.calls.apply.length, 0);
   assert.equal(f.nodes.get("apply").disabled, true);
+  assert.equal(f.nodes.get("diagnostics").value, "");
+});
+
+test("manual diagnostics are read-only and do not require a preceding analysis", async () => {
+  const f = fixture();
+  await f.event("diagnose");
+  assert.equal(f.calls.diagnostics, 1);
+  assert.equal(f.calls.read.length, 0);
+  assert.equal(f.calls.apply.length, 0);
+  assert.match(f.nodes.get("diagnostics").value, /ADBE Motion/);
+  assert.equal(f.nodes.get("diagnose").disabled, false);
+});
+
+test("diagnostic failure cannot hide the original apply error or leave controls disabled", async () => {
+  const f = fixture({ hostFailPaths: ["/images/sample-1.tif"], diagnosticsError: true });
+  await f.event("analyze");
+  await f.event("apply");
+  assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
+  assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
+  assert.match(f.nodes.get("diagnostics").value, /診断APIを読み取れません/);
+  assert.equal(f.nodes.get("analyze").disabled, false);
 });
 
 test("cancel stops at a clip checkpoint and leaves unprocessed clips available", async () => {

@@ -8,6 +8,8 @@ const { detectBlackBorders } = require("./black-borders");
 const { detectPanelFrame } = require("./panel-frame");
 const { calculateFit } = require("./fit-geometry");
 const { readSource, verifySource } = require("./source-file");
+const { collectPremiereDiagnostics } = require("./premiere-diagnostics");
+const { version: PLUGIN_VERSION } = require("../manifest.json");
 
 const host = createPremiereHost(ppro);
 let context = null;
@@ -24,6 +26,27 @@ function controls() {
   el("analyze").disabled = busy;
   el("apply").disabled = busy || !records.some(record => record.state === "ready");
   el("cancel").disabled = !busy;
+  el("diagnose").disabled = busy;
+}
+
+async function refreshDiagnostics(failures = []) {
+  const lines = [`Kenshiro v${PLUGIN_VERSION}`];
+  failures.forEach((record, index) => lines.push(`失敗 ${index + 1}: ${record.error}`));
+  el("diagnostics").value = `${lines.join("\n")}\n診断情報を取得中…`;
+  try {
+    lines.push(await collectPremiereDiagnostics(ppro));
+  } catch (error) {
+    lines.push(`診断情報の取得にも失敗しました: ${message(error)}`);
+  }
+  el("diagnostics").value = lines.join("\n");
+}
+
+async function diagnose() {
+  if (busy) return;
+  busy = true;
+  controls();
+  try { await refreshDiagnostics(records.filter(record => record.error)); }
+  finally { busy = false; controls(); }
 }
 
 function text(parent, value, className) {
@@ -64,6 +87,8 @@ async function analyze() {
   cancelled = false;
   context = null;
   records = [];
+  el("status").className = "";
+  el("diagnostics").value = "";
   const mode = el("mode").value;
   render();
   try {
@@ -102,7 +127,8 @@ async function analyze() {
       await yieldUI();
     }
     const ready = records.filter(r => r.state === "ready").length;
-    el("status").textContent = `${cancelled ? "解析中断" : "解析完了"}: 適用待ち ${ready} 件、スキップ ${records.length - ready} 件。値を確認して適用してください。`;
+    const firstError = records.find(record => record.error);
+    el("status").textContent = `${cancelled ? "解析中断" : "解析完了"}: 適用待ち ${ready} 件、スキップ ${records.length - ready} 件。値を確認して適用してください。${firstError ? `\nスキップ理由: ${firstError.error}` : ""}`;
   } catch (error) {
     el("status").textContent = message(error);
   } finally {
@@ -115,6 +141,8 @@ async function apply() {
   if (busy || !context) return;
   busy = true;
   cancelled = false;
+  el("status").className = "";
+  el("diagnostics").value = "";
   controls();
   const targets = records.filter(record => record.state === "ready");
   let applied = 0;
@@ -137,7 +165,10 @@ async function apply() {
       render();
       await yieldUI();
     }
-    el("status").textContent = `${cancelled ? "適用中断" : "適用完了"}: 成功 ${applied} 件、失敗 ${failed} 件。Motionは未変更です。取り消しは編集メニューの「取り消し」で行えます。`;
+    const failures = targets.filter(record => record.state === "failed");
+    el("status").className = failures.length ? "error" : "";
+    el("status").textContent = `${cancelled ? "適用中断" : "適用完了"}: 成功 ${applied} 件、失敗 ${failed} 件。Motionは未変更です。取り消しは編集メニューの「取り消し」で行えます。${failures.length ? `\n失敗理由: ${failures[0].error}\n下の「診断情報」の文章をコピーして送ってください。` : ""}`;
+    if (failures.length) await refreshDiagnostics(failures);
   } finally {
     busy = false;
     controls();
@@ -150,9 +181,12 @@ function initialize() {
   el("analyze").addEventListener("click", analyze);
   el("apply").addEventListener("click", apply);
   el("cancel").addEventListener("click", () => { cancelled = true; });
+  el("diagnose").addEventListener("click", diagnose);
   el("mode").addEventListener("change", () => {
     context = null;
     records = [];
+    el("status").className = "";
+    el("diagnostics").value = "";
     render();
     el("status").textContent = "検出モードを変更しました。選択クリップを再解析してください。";
   });
