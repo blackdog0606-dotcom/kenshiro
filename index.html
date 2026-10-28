@@ -8,14 +8,14 @@
 </head>
 <body>
   <div id="panel-scroll">
-  <h1>黒枠自動クロップ v0.1.3</h1>
+  <h1>黒枠自動クロップ v0.1.4</h1>
   <p id="startup-status" role="status">起動チェックを読み込んでいます…</p>
   <p id="status" role="status" aria-live="polite">未解析です。タイムラインの静止画を選択してください。</p>
   <p class="muted">PNG／JPEG／TIFを1〜10枚。①解析 → ②適用。</p>
   <label for="mode">検出する枠</label>
   <select id="mode" disabled>
     <option value="panel-frame" selected>白い余白 ＋ 黒いコマ枠</option>
-    <option value="edge-bands">画像端から連続する黒帯のみ</option>
+    <option value="edge-bands">画像端の黒帯（白い余白内の枠にも対応）</option>
   </select>
   <div class="actions">
     <button id="analyze" disabled>①解析</button>
@@ -26,9 +26,9 @@
   <div id="results"></div>
   <label for="diagnostics">診断情報（失敗時はこの欄をコピーして送ってください）</label>
   <textarea id="diagnostics" readonly placeholder="適用に失敗すると、具体的な理由とPremiereのエフェクト情報をここに表示します。"></textarea>
-  <p class="muted">黒はRGB各値20以下、黒率95%以上、元画像から0.1%に丸めます。白い余白の内側のコマ枠を除去する場合は「白い余白＋黒いコマ枠」を選択してください。</p>
+  <p class="muted">黒はRGB各値20以下、黒率95%以上、元画像から0.1%に丸めます。黒帯モードで画像端に黒帯がない場合は、白い余白内の四辺のコマ枠を確認し、その内側までクロップします。</p>
   <p class="muted">複製したシーケンスでお試しください。既存Cropの四辺は上書きします。選択・素材・検出モードを変えたら再解析してください。</p>
-  <p class="muted">拡大は目安を参考にMotionで調整してください。正方形ピクセル・未回転・元画像中心アンカー・事前縮小なしの場合の目安です。</p>
+  <p class="muted">Cropだけを変更します。拡大や位置変更は行いません。</p>
   </div>
   <script src="dist/main.js"></script>
 </body>

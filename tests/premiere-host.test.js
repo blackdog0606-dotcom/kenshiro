@@ -124,6 +124,29 @@ test("updates a recognized existing Crop in one undoable transaction without add
   assert.deepEqual(f.calls, ["黒枠: Crop 値を設定"]);
 });
 
+test("Crop-only application preserves native Motion scale, position and all other parameters", async () => {
+  const f = fixture({ matchName: "AE.ADBE AECrop" });
+  const motionValues = [[0.5, 0.5], 54.49825668334961, 54.49825668334961, true, 0, [0.5, 0.5], 0, 0, 0, 0, 0];
+  const before = structuredClone(motionValues);
+  const motionParams = motionValues.map((value, index) => {
+    const param = makeParam(`Motion ${index}`, value);
+    param.createSetValueAction = () => { throw new Error("Crop-only must not write Motion parameters"); };
+    return param;
+  });
+  const motion = {
+    getMatchName: async () => "AE.ADBE Motion",
+    getParamCount: () => motionParams.length,
+    getParam: index => motionParams[index]
+  };
+  f.components.unshift(motion);
+  const { context, record } = await prepared(f);
+  await f.host.applyCrop(context, record);
+  assert.equal(f.components[0], motion);
+  assert.deepEqual(motionParams.map(param => param.value), before);
+  assert.deepEqual(f.calls, ["黒枠: Crop 値を設定"]);
+  assert.deepEqual(f.components[1].params.slice(0, 4).map(p => p.value), Object.values(percentages));
+});
+
 test("appends new Crop before reading its parameters and can be repeated without duplicates", async () => {
   const f = fixture({ existing: false });
   const { context, record } = await prepared(f);

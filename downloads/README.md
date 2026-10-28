@@ -1,17 +1,20 @@
-# 開発用プラグインZIP v0.1.3
+# 開発用プラグインZIP v0.1.4
 
-[v0.1.3 標準Crop識別修正版をダウンロード](https://github.com/blackdog0606-dotcom/kenshiro/raw/refs/heads/main/downloads/kenshiro-blackcrop-mvp-0.1.3.zip)
+[v0.1.4 黒帯検出修正版をダウンロード](https://github.com/blackdog0606-dotcom/kenshiro/raw/refs/heads/main/downloads/kenshiro-blackcrop-mvp-0.1.4.zip)
 
-Premiere Pro 26.5.2の実機診断で標準Cropの内部名が `AE.ADBE AECrop` と確認できました。旧版がこの名前を認識せず適用前に停止する不具合を修正しています。第三者製 `AE.Impact_Crop_FX` やMotionを代替として変更しません。小さいウィンドウでも結果が隠れないよう、状態表示を上部へ移動して画面全体をスクロール可能にしました。
+「画像端の黒帯（白い余白内の枠にも対応）」では、画像端の黒帯が四辺とも0pxの場合に、既存の四辺コマ枠検出を続けて行います。四辺を確認できた枠の内縁までをCrop値にし、結果に検出方法を表示します。枠を確定できない画像はスキップし、0%で既存Cropを上書きしません。RGB各値20以下・95%以上・0.1%への四捨五入は維持しています。
 
-- サイズ: 252,745 bytes
-- SHA-256: `58a0d514e53ef6c3c585d228639e138cd43feef103e0c2d7cd93ace5459c927c`
+初期設定の「白い余白＋黒いコマ枠」の検出処理は変更していません。別途調査中の枠内縁の修正は含めていません。**Cropだけを変更し、Motionのスケール・位置・回転・アンカーポイントは変更しません。**
+
 - 対象: Premiere Pro 25.6以降
-- 自動テスト: 166件成功
 - 同梱: ビルド済みUXPパネル、ソース、導入手順、生成したテスト用TIF10枚
+- 配布形式: UXP Developer Toolで読み込む開発用ZIP。署名済みCCXではありません。
+- 検証: 自動テスト176件成功、ZIP CRC検査成功
+- ZIPサイズ: 235,423バイト
+- SHA-256: `3a7433b49efb2ba383c428d56db411935f045fa583378d8cbbf330a0e9832418`
 
-旧版をUXP Developer ToolでUnload→Removeし、新しいZIPの `kenshiro-blackcrop-mvp-0.1.3/manifest.json` をAdd Plugin→Loadしてください。
+旧版をUXP Developer Toolで **Unload → Remove** し、新しいZIPを解凍して `kenshiro-blackcrop-mvp-0.1.4/manifest.json` を **Add Plugin → Load** してください。
 
-見出しがv0.1.3になったら、タイムラインの静止画1枚を選択し、検出モード「白い余白＋黒いコマ枠」で①解析→②適用してください。
+見出しと起動状態がv0.1.4になったら、タイムラインの静止画1枚を選択し、検出モード「画像端の黒帯（白い余白内の枠にも対応）」で **①解析 → ②適用** してください。結果欄で検出方法と四辺の値を確認できます。
 
-今回の実機エラーの原因は特定済みですが、修正後の実機適用成功はまだ未確認です。失敗した場合は上部の具体的な失敗理由を報告してください。提供されたユーザー画像はZIPに含めていません。署名済みCCXではありません。
+Premiere Pro 26.5.2ではv0.1.3の標準Crop追加・値の適用が確認済みです。今回の修正は生成画像と既存の元TIFをクラウドで検証しています。新しく共有された3631×1815pxの画像は縮小画像のみで、元TIFのピクセル検証とv0.1.4の実機確認は未実施です。ユーザー提供の画像はZIPに含めていません。

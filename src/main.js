@@ -4,9 +4,7 @@ const { entrypoints, storage } = require("uxp");
 const ppro = require("premierepro");
 const { createPremiereHost } = require("./premiere-host");
 const { decodeImage } = require("./image-reader");
-const { detectBlackBorders } = require("./black-borders");
-const { detectPanelFrame } = require("./panel-frame");
-const { calculateFit } = require("./fit-geometry");
+const { detectBorders } = require("./border-detection");
 const { readSource, verifySource } = require("./source-file");
 const { collectPremiereDiagnostics } = require("./premiere-diagnostics");
 const { version: PLUGIN_VERSION } = require("../manifest.json");
@@ -90,13 +88,12 @@ function render() {
     text(row, record.error ? `${label}: ${record.error}` : label, record.error ? "error" : record.state === "applied" ? "success" : "");
     if (record.detection && record.detection.status === "ok") {
       const d = record.detection;
+      text(row, d.method === "white-margin-frame-fallback"
+        ? "検出: 白い余白の内側の黒いコマ枠"
+        : d.mode === "panel-frame" ? "検出: 黒いコマ枠" : "検出: 画像端から連続する黒帯");
       text(row, `${d.width} × ${d.height}px ／ クロップpx: 左${d.pixels.left} 右${d.pixels.right} 上${d.pixels.top} 下${d.pixels.bottom}`);
       const p = d.percentages;
       text(row, `Left ${p.left.toFixed(1)}% ／ Right ${p.right.toFixed(1)}% ／ Top ${p.top.toFixed(1)}% ／ Bottom ${p.bottom.toFixed(1)}%`, "values");
-    }
-    if (record.fit) {
-      const f = record.fit;
-      text(row, `拡大の目安: Scale ${f.scalePercent.toFixed(2)}% ／ Position (${f.positionPixels.x.toFixed(1)}, ${f.positionPixels.y.toFixed(1)})px`, "muted");
     }
     list.appendChild(row);
   });
@@ -118,8 +115,6 @@ async function analyze() {
     if (!selected.items.length) throw new Error("タイムラインでPNG／JPEG／TIFの静止画クリップを選択してください。");
     if (selected.items.length > 10) throw new Error("最小版は1回10クリップまでです。選択数を減らしてください。");
     context = selected;
-    let frame;
-    try { frame = await context.sequence.getFrameSize(); } catch (_) { /* Crop alone remains usable. */ }
     for (const item of selected.items) {
       if (cancelled) break;
       const record = { ...item, state: "skipped" };
@@ -131,15 +126,14 @@ async function analyze() {
         record.signature = signature;
         const extension = item.path.split(".").pop();
         const image = decodeImage(bytes, extension);
-        record.detection = mode === "panel-frame" ? detectPanelFrame(image) : detectBlackBorders(image);
+        record.detection = detectBorders(image, mode);
         if (record.detection.status !== "ok") {
           throw new Error(mode === "panel-frame"
             ? "四辺の黒いコマ枠を確定できません。枠の欠け・傾き・複数の枠などを確認してください。"
             : "黒枠と内容の境界を確定できません（全黒・ほぼ全黒、または丸めで内容が消える画像）。");
         }
-        if (frame) {
-          try { record.fit = calculateFit({ ...record.detection, sequenceWidth: frame.width, sequenceHeight: frame.height }); }
-          catch (_) { /* Optional fit hints must not block a valid Crop. */ }
+        if (Object.values(record.detection.pixels).every(value => value === 0)) {
+          throw new Error("黒帯を検出できませんでした。白い余白の内側にも四辺の黒いコマ枠を確認できないため、適用しません。");
         }
         record.state = "ready";
       } catch (error) {

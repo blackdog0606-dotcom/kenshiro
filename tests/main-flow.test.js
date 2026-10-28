@@ -55,7 +55,11 @@ function fixture(options = {}) {
   const imports = {
     uxp: { entrypoints: { setup(value) { panel = value.panels.blackCropPanel; } }, storage: {} },
     premierepro: {},
-    "../manifest.json": { version: "0.1.3" },
+    "../manifest.json": { version: "0.1.4" },
+    "./border-detection": { detectBorders: (image, mode) => {
+      const result = mode === "panel-frame" ? detectPanelFrame(image) : detectBlackBorders(image);
+      return options.detection || result;
+    } },
     "./premiere-diagnostics": { collectPremiereDiagnostics: async () => {
       calls.diagnostics++;
       if (options.diagnosticsWait) await options.diagnosticsWait;
@@ -190,7 +194,7 @@ test("one apply failure is displayed and processing continues with remaining cli
   assert.match(f.results(), /シーケンスが変更/);
   assert.match(f.status(), /失敗理由:.*シーケンスが変更/);
   assert.equal(f.calls.diagnostics, 1);
-  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.3/);
+  assert.match(f.nodes.get("diagnostics").value, /Kenshiro v0\.1\.4/);
   assert.match(f.nodes.get("diagnostics").value, /Crop候補/);
   assert.match(f.nodes.get("diagnostics").value, /シーケンスが変更/);
   assert.equal(f.nodes.get("analyze").disabled, false);
@@ -260,6 +264,35 @@ test("changing detection mode invalidates pending analysis and uses the selected
   await f.event("apply");
   assert.equal(f.calls.edges, 1);
   assert.equal(f.calls.apply[0].detection.percentages.left, 1);
+});
+
+test("white-margin fallback reports the actual method and applies only Crop values", async () => {
+  const result = { ...detection("edge-bands"), method: "white-margin-frame-fallback" };
+  const f = fixture({ detection: result });
+  f.nodes.get("mode").value = "edge-bands";
+  await f.event("analyze");
+  assert.match(f.results(), /検出: 白い余白の内側の黒いコマ枠/);
+  assert.doesNotMatch(f.results(), /拡大の目安|Scale|Position/);
+  await f.event("apply");
+  assert.equal(f.calls.apply.length, 1);
+  assert.equal(f.calls.apply[0].detection, result);
+  assert.equal("fit" in f.calls.apply[0], false);
+});
+
+test("no detected border is skipped and cannot reset an existing Crop to zero", async () => {
+  const result = {
+    ...detection("edge-bands"),
+    pixels: { left: 0, right: 0, top: 0, bottom: 0 },
+    percentages: { left: 0, right: 0, top: 0, bottom: 0 }
+  };
+  const f = fixture({ detection: result });
+  f.nodes.get("mode").value = "edge-bands";
+  await f.event("analyze");
+  assert.match(f.results(), /黒帯を検出できませんでした/);
+  assert.match(f.status(), /適用待ち 0 件、スキップ 1 件/);
+  assert.equal(f.nodes.get("apply").disabled, true);
+  await f.event("apply");
+  assert.equal(f.calls.apply.length, 0);
 });
 
 test("source verification failure is displayed and prevents a stale effect write", async () => {
