@@ -7,27 +7,29 @@
   <title>黒枠自動クロップ</title>
 </head>
 <body>
+  <div id="panel-scroll">
   <h1>黒枠自動クロップ v0.1.2</h1>
   <p id="startup-status" role="status">起動チェックを読み込んでいます…</p>
-  <p>タイムラインの PNG／JPEG／TIF 静止画を1〜10枚選択してください。</p>
+  <p id="status" role="status" aria-live="polite">未解析です。タイムラインの静止画を選択してください。</p>
+  <p class="muted">PNG／JPEG／TIFを1〜10枚。①解析 → ②適用。</p>
   <label for="mode">検出する枠</label>
   <select id="mode" disabled>
     <option value="panel-frame" selected>白い余白 ＋ 黒いコマ枠</option>
     <option value="edge-bands">画像端から連続する黒帯のみ</option>
   </select>
-  <p class="muted">RGB各値 ≤ 20・黒率 ≥ 95%。コマ枠モードは四辺の長方形を確認して内側まで、黒帯モードは画像端から連続する行・列だけをクロップします。元画像から0.1%単位で計算します。</p>
   <div class="actions">
-    <button id="analyze" disabled>選択クリップを解析</button>
-    <button id="apply" disabled>解析したクリップに適用</button>
+    <button id="analyze" disabled>①解析</button>
+    <button id="apply" disabled>②適用</button>
     <button id="cancel" disabled>中断</button>
-    <button id="diagnose" disabled>診断情報を表示</button>
+    <button id="diagnose" disabled>診断</button>
   </div>
-  <p id="status" role="status" aria-live="polite">未解析です。まず複製したシーケンスでお試しください。</p>
+  <div id="results"></div>
   <label for="diagnostics">診断情報（失敗時はこの欄をコピーして送ってください）</label>
   <textarea id="diagnostics" readonly placeholder="適用に失敗すると、具体的な理由とPremiereのエフェクト情報をここに表示します。"></textarea>
-  <p class="muted">既存のCropは上書きします。キーフレーム付きCrop・全黒画像・未対応形式は適用せず理由を表示します。選択や素材を変更したら再解析してください。</p>
-  <div id="results"></div>
-  <p class="muted">拡大は「目安」を参考に Motion で調整してください。縦横比を保ち、残った画像の上下または左右が画面に収まる値です。自動拡大や「フレームサイズに合わせてスケール」は実行しません。</p>
+  <p class="muted">黒はRGB各値20以下、黒率95%以上、元画像から0.1%に丸めます。白い余白の内側のコマ枠を除去する場合は「白い余白＋黒いコマ枠」を選択してください。</p>
+  <p class="muted">複製したシーケンスでお試しください。既存Cropの四辺は上書きします。選択・素材・検出モードを変えたら再解析してください。</p>
+  <p class="muted">拡大は目安を参考にMotionで調整してください。正方形ピクセル・未回転・元画像中心アンカー・事前縮小なしの場合の目安です。</p>
+  </div>
   <script src="dist/main.js"></script>
 </body>
 </html>

@@ -86,6 +86,8 @@ function render() {
     const row = document.createElement("div");
     row.className = "result";
     text(row, `${index + 1}. ${record.name || "名称不明"}`, "name");
+    const label = record.state === "applied" ? "適用済み" : record.state === "ready" ? "適用待ち" : "スキップ／失敗";
+    text(row, record.error ? `${label}: ${record.error}` : label, record.error ? "error" : record.state === "applied" ? "success" : "");
     if (record.detection && record.detection.status === "ok") {
       const d = record.detection;
       text(row, `${d.width} × ${d.height}px ／ クロップpx: 左${d.pixels.left} 右${d.pixels.right} 上${d.pixels.top} 下${d.pixels.bottom}`);
@@ -95,10 +97,7 @@ function render() {
     if (record.fit) {
       const f = record.fit;
       text(row, `拡大の目安: Scale ${f.scalePercent.toFixed(2)}% ／ Position (${f.positionPixels.x.toFixed(1)}, ${f.positionPixels.y.toFixed(1)})px`, "muted");
-      text(row, "正方形ピクセル・未回転・元画像中心アンカー・事前縮小なしの場合。既存設定によって要調整。", "muted");
     }
-    const label = record.state === "applied" ? "適用済み" : record.state === "ready" ? "適用待ち" : "スキップ／失敗";
-    text(row, record.error ? `${label}: ${record.error}` : label, record.error ? "error" : record.state === "applied" ? "success" : "");
     list.appendChild(row);
   });
   controls();
