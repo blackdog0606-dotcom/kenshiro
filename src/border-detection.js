@@ -7,6 +7,7 @@ const { detectPanelFrame } = require("./panel-frame");
 // scan from reaching an inset frame. Only an all-zero result may try the
 // existing four-sided frame detector; uncertain frames produce no crop.
 function detectBorders(image, mode) {
+  if (mode === "partial-frame") return detectPanelFrame(image, { partial: true });
   if (mode === "panel-frame") return detectPanelFrame(image);
   if (mode !== "edge-bands") throw new Error("検出モードを選択し直してください。");
 

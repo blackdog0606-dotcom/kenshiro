@@ -386,3 +386,20 @@ test("an event-handler exception before its inner try is displayed and clears bu
   await f.event("analyze");
   assert.equal(f.calls.read.length, 1);
 });
+
+test("partial frame mode renders absent edges as zero and forwards crops to the existing Motion apply", async () => {
+  const partial = {
+    status: "ok", mode: "partial-frame", width: 400, height: 300,
+    pixels: { left: 0, right: 34, top: 0, bottom: 0 },
+    percentages: { left: 0, right: 8.5, top: 0, bottom: 0 }
+  };
+  const f = fixture({ detection: partial });
+  f.nodes.get("mode").value = "partial-frame";
+  await f.event("analyze");
+  assert.match(f.results(), /部分コマ枠/);
+  assert.match(f.results(), /Left 0.0% ／ Right 8.5% ／ Top 0.0% ／ Bottom 0.0%/);
+  await f.event("apply");
+  assert.equal(f.calls.apply.length, 1);
+  assert.deepEqual(f.calls.apply[0].detection.percentages, partial.percentages);
+  assert.match(f.status(), /成功 1 件、失敗 0/);
+});

@@ -90,6 +90,7 @@ function render() {
       const d = record.detection;
       text(row, d.method === "white-margin-frame-fallback"
         ? "検出: 白い余白の内側の黒いコマ枠"
+        : d.mode === "partial-frame" ? "検出: 白余白と部分コマ枠（検出なしの辺は0%）"
         : d.mode === "panel-frame" ? "検出: 黒いコマ枠" : "検出: 画像端から連続する黒帯");
       text(row, `${d.width} × ${d.height}px ／ クロップpx: 左${d.pixels.left} 右${d.pixels.right} 上${d.pixels.top} 下${d.pixels.bottom}`);
       const p = d.percentages;
@@ -128,7 +129,9 @@ async function analyze() {
         const image = decodeImage(bytes, extension);
         record.detection = detectBorders(image, mode);
         if (record.detection.status !== "ok") {
-          throw new Error(mode === "panel-frame"
+          throw new Error(mode === "partial-frame"
+            ? "白い余白と長い黒い枠線を確定できません。枠線の外側に白い余白がある画像を使用してください。"
+            : mode === "panel-frame"
             ? "四辺の黒いコマ枠を確定できません。枠の欠け・傾き・複数の枠などを確認してください。"
             : "黒枠と内容の境界を確定できません（全黒・ほぼ全黒、または丸めで内容が消える画像）。");
         }

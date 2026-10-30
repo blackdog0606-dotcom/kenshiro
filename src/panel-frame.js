@@ -11,9 +11,11 @@ const MAX_BAND_FRACTION = 0.03;
  * RGB <= 20 remains the black threshold. A narrow side band must cover at
  * least 95% of its rectangle span: a coordinate is covered when that band
  * contains a black pixel. Projection tolerates a slightly skewed printed line.
- * All four sides are mandatory; uncertain images never fall back to edge crop.
+ * Four sides are mandatory by default. Opt-in partial mode accepts missing
+ * sides only with verified white exterior margins on the detected sides.
  */
-function detectPanelFrame(image) {
+function detectPanelFrame(image, { partial = false } = {}) {
+  const mode = partial ? "partial-frame" : MODE;
   if (!image || typeof image !== "object") throw new TypeError("An RGBA image is required.");
   const { width, height, data } = image;
   if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1 ||
@@ -23,7 +25,7 @@ function detectPanelFrame(image) {
   }
   if (data.length !== width * height * 4) throw new RangeError("RGBA data length does not match dimensions.");
   const skipped = (reason = "no-rectangular-frame") => ({
-    status: "ambiguous", reason, mode: MODE, method: METHOD, width, height, pixels: null, percentages: null
+    status: "ambiguous", reason, mode, method: METHOD, width, height, pixels: null, percentages: null
   });
   if (width < 8 || height < 8) return skipped();
   const isBlack = (x, y) => {
@@ -103,11 +105,18 @@ function detectPanelFrame(image) {
   const b = estimate(bottom, height, true, true);
   const l = estimate(left, width, false, false);
   const r = estimate(right, width, false, true);
-  if (!t || !b || !l || !r) return skipped();
-  const outerBounds = { left: l.outer, right: r.outer, top: t.outer, bottom: b.outer };
-  const innerBounds = { left: l.inner, right: r.inner, top: t.inner, bottom: b.inner };
-  if (r.outer - l.outer < width * 0.5 || b.outer - t.outer < height * 0.5 ||
-      r.inner - l.inner < width * 0.25 || b.inner - t.inner < height * 0.25) return skipped();
+  if (!partial && (!t || !b || !l || !r)) return skipped();
+  if (!t && !b && !l && !r) return skipped();
+  // Missing sides terminate at the source edge; they must never add a crop.
+  const sides = { top: t, bottom: b, left: l, right: r };
+  const tt = t || { outer: 0, inner: 0 };
+  const bb = b || { outer: height, inner: height };
+  const ll = l || { outer: 0, inner: 0 };
+  const rr = r || { outer: width, inner: width };
+  const outerBounds = { left: ll.outer, right: rr.outer, top: tt.outer, bottom: bb.outer };
+  const innerBounds = { left: ll.inner, right: rr.inner, top: tt.inner, bottom: bb.inner };
+  if (rr.outer - ll.outer < width * 0.5 || bb.outer - tt.outer < height * 0.5 ||
+      rr.inner - ll.inner < width * 0.25 || bb.inner - tt.inner < height * 0.25) return skipped();
 
   // Check a thin projected side, and also require a genuinely straight line:
   // either >=90% coverage on one row/column or a continuous run >=10% long.
@@ -135,12 +144,35 @@ function detectPanelFrame(image) {
     for (const value of coverage) covered += value;
     return covered * 100 >= span * 95 && straight;
   }
-  if (!verify(true, t.outer, t.inner, l.outer, r.outer) ||
-      !verify(true, b.inner, b.outer, l.outer, r.outer) ||
-      !verify(false, l.outer, l.inner, t.outer, b.outer) ||
-      !verify(false, r.inner, r.outer, t.outer, b.outer)) return skipped();
+  if ((t && !verify(true, tt.outer, tt.inner, ll.outer, rr.outer)) ||
+      (b && !verify(true, bb.inner, bb.outer, ll.outer, rr.outer)) ||
+      (l && !verify(false, ll.outer, ll.inner, tt.outer, bb.outer)) ||
+      (r && !verify(false, rr.inner, rr.outer, tt.outer, bb.outer))) return skipped();
 
-  const pixels = { left: l.inner, right: width - r.inner, top: t.inner, bottom: height - b.inner };
+  // In the opt-in partial mode, require a real white exterior margin on
+  // every detected side. A black background touching an edge is not a frame.
+  if (partial) {
+    function whiteMargin(horizontal, start, end, alongStart, alongEnd) {
+      if (end <= start) return false;
+      let white = 0;
+      const total = (end - start) * (alongEnd - alongStart);
+      for (let across = start; across < end; across++) {
+        for (let along = alongStart; along < alongEnd; along++) {
+          const x = horizontal ? along : across;
+          const y = horizontal ? across : along;
+          const i = (y * width + x) * 4;
+          if (data[i] >= 235 && data[i + 1] >= 235 && data[i + 2] >= 235) white++;
+        }
+      }
+      return total > 0 && white * 100 >= total * 95;
+    }
+    if ((t && !whiteMargin(true, 0, tt.outer, ll.outer, rr.outer)) ||
+        (b && !whiteMargin(true, bb.outer, height, ll.outer, rr.outer)) ||
+        (l && !whiteMargin(false, 0, ll.outer, tt.outer, bb.outer)) ||
+        (r && !whiteMargin(false, rr.outer, width, tt.outer, bb.outer))) return skipped("no-white-exterior-margin");
+  }
+
+  const pixels = { left: ll.inner, right: width - rr.inner, top: tt.inner, bottom: height - bb.inner };
   const percent = (count, size) => Math.round(count * 1000 / size) / 10;
   const percentages = {
     left: percent(pixels.left, width), right: percent(pixels.right, width),
@@ -150,9 +182,10 @@ function detectPanelFrame(image) {
     return skipped("rounded-content-loss");
   }
   return {
-    status: "ok", mode: MODE, method: METHOD, width, height, pixels, percentages,
+    status: "ok", mode, method: METHOD, width, height, pixels, percentages,
     outerBounds, innerBounds,
-    bandWidths: { left: l.inner - l.outer, right: r.outer - r.inner, top: t.inner - t.outer, bottom: b.outer - b.inner }
+    ...(partial ? { detectedSides: Object.keys(sides).filter(side => sides[side]) } : {}),
+    bandWidths: { left: ll.inner - ll.outer, right: rr.outer - rr.inner, top: tt.inner - tt.outer, bottom: bb.outer - bb.inner }
   };
 }
 
